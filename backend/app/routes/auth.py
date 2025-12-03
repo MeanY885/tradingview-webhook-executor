@@ -66,9 +66,9 @@ def login():
     if not user.is_active:
         return jsonify({'error': 'Account disabled'}), 403
 
-    # Create tokens
-    access_token = create_access_token(identity=user.id)
-    refresh_token = create_refresh_token(identity=user.id)
+    # Create tokens (identity must be string)
+    access_token = create_access_token(identity=str(user.id))
+    refresh_token = create_refresh_token(identity=str(user.id))
 
     return jsonify({
         'access_token': access_token,
@@ -81,7 +81,7 @@ def login():
 @jwt_required()
 def get_current_user():
     """Get current user info with webhook URLs."""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())  # Convert string back to int
     user = User.query.get(user_id)
 
     if not user:
@@ -94,7 +94,7 @@ def get_current_user():
 @jwt_required()
 def regenerate_webhook_token():
     """Regenerate user's webhook token (invalidates old URLs)."""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())  # Convert string back to int
     user = User.query.get(user_id)
 
     if not user:
@@ -113,8 +113,8 @@ def regenerate_webhook_token():
 @jwt_required(refresh=True)
 def refresh():
     """Refresh access token."""
-    user_id = get_jwt_identity()
-    access_token = create_access_token(identity=user_id)
+    user_id = get_jwt_identity()  # Already a string from the refresh token
+    access_token = create_access_token(identity=user_id)  # Keep as string
     return jsonify({'access_token': access_token})
 
 
@@ -122,7 +122,7 @@ def refresh():
 @jwt_required()
 def get_webhook_ip_whitelist():
     """Get current IP whitelist settings."""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())  # Convert string back to int
     user = User.query.get(user_id)
 
     if not user:
@@ -144,7 +144,7 @@ def get_webhook_ip_whitelist():
 @jwt_required()
 def update_webhook_ip_whitelist():
     """Update IP whitelist settings."""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())  # Convert string back to int
     user = User.query.get(user_id)
 
     if not user:

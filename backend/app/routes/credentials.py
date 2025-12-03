@@ -12,7 +12,7 @@ bp = Blueprint('credentials', __name__, url_prefix='/api/credentials')
 @jwt_required()
 def get_credentials():
     """Get all credentials for current user."""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())  # Convert string back to int
     credentials = UserCredentials.query.filter_by(user_id=user_id).all()
     return jsonify([c.to_dict() for c in credentials])
 
@@ -21,7 +21,7 @@ def get_credentials():
 @jwt_required()
 def create_credentials():
     """Create new credential set."""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())  # Convert string back to int
     data = request.get_json()
 
     broker = data.get('broker')

@@ -12,7 +12,7 @@ bp = Blueprint('webhook_logs', __name__, url_prefix='/api/webhook-logs')
 @jwt_required()
 def get_webhook_logs():
     """Get webhook logs for current user with filtering."""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())  # Convert string back to int
 
     # Query params
     page = request.args.get('page', 1, type=int)
@@ -51,7 +51,7 @@ def get_webhook_logs():
 @jwt_required()
 def get_webhook_stats():
     """Get statistics for current user."""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())  # Convert string back to int
 
     # Count by status
     stats = db.session.query(
