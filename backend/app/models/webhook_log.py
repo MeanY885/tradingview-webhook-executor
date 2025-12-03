@@ -1,6 +1,7 @@
 """Webhook log model for tracking all incoming webhooks."""
 from app.extensions import db
 from datetime import datetime
+import json
 
 
 class WebhookLog(db.Model):
@@ -26,9 +27,13 @@ class WebhookLog(db.Model):
     stop_loss = db.Column(db.Float)
     take_profit = db.Column(db.Float)
     trailing_stop_pct = db.Column(db.Float)
+    leverage = db.Column(db.Float)  # Trading leverage (e.g., 5x, 10x)
+
+    # Additional metadata (stored as JSON for flexibility)
+    metadata_json = db.Column(db.Text)  # Stores TradingView metadata, alert_message_params, etc.
 
     # Execution status
-    status = db.Column(db.String(20), nullable=False)  # 'success', 'failed', 'invalid'
+    status = db.Column(db.String(20), nullable=False)  # 'success', 'failed', 'invalid', 'test_success'
     broker_order_id = db.Column(db.String(50))
     client_order_id = db.Column(db.String(32))
     error_message = db.Column(db.Text)
@@ -41,6 +46,14 @@ class WebhookLog(db.Model):
 
     def to_dict(self):
         """Serialize webhook log to dict."""
+        # Parse metadata_json if present
+        metadata = {}
+        if self.metadata_json:
+            try:
+                metadata = json.loads(self.metadata_json)
+            except (json.JSONDecodeError, TypeError):
+                metadata = {}
+
         return {
             'id': self.id,
             'user_id': self.user_id,
@@ -54,6 +67,8 @@ class WebhookLog(db.Model):
             'price': self.price,
             'stop_loss': self.stop_loss,
             'take_profit': self.take_profit,
+            'leverage': self.leverage,
+            'metadata': metadata,
             'status': self.status,
             'broker_order_id': self.broker_order_id,
             'error_message': self.error_message,

@@ -42,32 +42,37 @@ class TradingViewAlertParser:
 
         Supports multiple field name variations to accommodate different TradingView alert formats:
         - symbol / instrument / ticker
-        - quantity / amount / contracts
-        - action / strategy.order.action
+        - quantity / amount / contracts / order_contracts
+        - action / side / order_action
+        - Parses order_alert_message for embedded parameters
         """
         # Extract symbol (try multiple field names)
-        symbol = (
-            data.get('symbol') or
-            data.get('instrument') or
-            data.get('ticker') or
-            ''
-        ).upper()
+        symbol = ''
+        for field in ['symbol', 'instrument', 'ticker']:
+            val = data.get(field)
+            if val and isinstance(val, str) and not val.startswith('{{'):
+                symbol = val.upper()
+                break
 
-        # Extract action (try multiple field names)
-        action = (
-            data.get('action') or
-            data.get('side') or
-            ''
-        ).lower()
+        # Extract action (try multiple field names, including TradingView strategy fields)
+        action = ''
+        for field in ['action', 'side', 'order_action']:
+            val = data.get(field)
+            if val and isinstance(val, str) and not val.startswith('{{'):
+                action = val.lower()
+                break
 
-        # Extract quantity (try multiple field names)
-        quantity_raw = (
-            data.get('quantity') or
-            data.get('amount') or
-            data.get('contracts') or
-            0
-        )
-        quantity = float(quantity_raw) if quantity_raw else 0
+        # Extract quantity (try multiple field names, including TradingView strategy fields)
+        quantity = 0
+        for field in ['quantity', 'amount', 'contracts', 'order_contracts']:
+            val = data.get(field)
+            if val:
+                try:
+                    quantity = float(val)
+                    if quantity > 0:
+                        break
+                except (ValueError, TypeError):
+                    continue
 
         # Extract order_type (support multiple field name variations)
         order_type_raw = (
@@ -87,15 +92,61 @@ class TradingViewAlertParser:
         }
         order_type = order_type_map.get(order_type_raw, order_type_raw)
 
+        # Parse order_alert_message if present (contains embedded JSON parameters)
+        alert_message_params = {}
+        raw_alert_message = data.get('order_alert_message', '')
+        if raw_alert_message:
+            alert_message_params = TradingViewAlertParser._parse_alert_message(raw_alert_message)
+
+        # Extract leverage from alert_message_params or top-level
+        leverage = None
+        if 'leverage' in alert_message_params:
+            try:
+                leverage = float(alert_message_params['leverage'])
+            except (ValueError, TypeError):
+                pass
+        elif 'leverage' in data:
+            try:
+                leverage = float(data['leverage'])
+            except (ValueError, TypeError):
+                pass
+
+        # Extract stop_loss_price from alert_message_params
+        stop_loss = None
+        if 'stop_loss_price' in alert_message_params:
+            try:
+                stop_loss = float(alert_message_params['stop_loss_price'])
+            except (ValueError, TypeError):
+                pass
+        if stop_loss is None and 'stop_loss' in data:
+            try:
+                stop_loss = float(data['stop_loss'])
+            except (ValueError, TypeError):
+                pass
+
+        # Extract order_price (for limit orders)
+        price = None
+        if 'order_price' in data:
+            try:
+                price = float(data['order_price'])
+            except (ValueError, TypeError):
+                pass
+        if price is None and 'price' in data:
+            try:
+                price = float(data['price'])
+            except (ValueError, TypeError):
+                pass
+
         return {
             'symbol': symbol,
             'action': action,
             'order_type': order_type,
             'quantity': quantity,
-            'price': float(data['price']) if 'price' in data else None,
-            'stop_loss': float(data['stop_loss']) if 'stop_loss' in data else None,
+            'price': price,
+            'stop_loss': stop_loss,
             'take_profit': float(data['take_profit']) if 'take_profit' in data else None,
             'trailing_stop_pct': float(data['trailing_stop_pct']) if 'trailing_stop_pct' in data else None,
+            'leverage': leverage,
             'test_mode': bool(data.get('test_mode', False)),  # Enable test mode to skip actual trade execution
             'metadata': {  # Store additional TradingView data for debugging/logging
                 'timestamp': data.get('timestamp'),
@@ -106,9 +157,69 @@ class TradingViewAlertParser:
                 'order_comment': data.get('order_comment'),
                 'position_size': data.get('position_size'),
                 'position_avg_price': data.get('position_avg_price'),
-                'market_position': data.get('market_position')
+                'market_position': data.get('market_position'),
+                'raw_alert_message': raw_alert_message,
+                'alert_message_params': alert_message_params  # Store parsed parameters
             }
         }
+
+    @staticmethod
+    def _parse_alert_message(alert_message: str) -> Dict:
+        """
+        Parse the order_alert_message field which contains embedded JSON parameters.
+
+        The alert_message often contains a JSON-like string with additional parameters
+        like leverage, order_type (enter_long, reduce_long), position, etc.
+
+        Args:
+            alert_message: The raw alert message string
+
+        Returns:
+            dict: Parsed parameters from the alert message
+        """
+        if not alert_message or not isinstance(alert_message, str):
+            return {}
+
+        try:
+            # Try parsing as-is first (in case it's valid JSON)
+            return json.loads(alert_message)
+        except json.JSONDecodeError:
+            pass
+
+        # Handle malformed JSON: sometimes starts with extra quote or missing braces
+        cleaned = alert_message.strip()
+
+        # Remove leading/trailing quotes if present
+        if cleaned.startswith('"') and not cleaned.startswith('"{'):
+            cleaned = cleaned[1:]
+        if cleaned.endswith('",') or cleaned.endswith('"'):
+            cleaned = cleaned.rstrip('",')
+
+        # Add braces if missing
+        if not cleaned.startswith('{'):
+            cleaned = '{' + cleaned
+        if not cleaned.endswith('}'):
+            cleaned = cleaned.rstrip(',') + '}'
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            # If still can't parse, try to extract key-value pairs manually
+            params = {}
+            # Match patterns like "key": "value" or "key": value
+            pattern = r'"([^"]+)":\s*"?([^",}]+)"?'
+            matches = re.findall(pattern, alert_message)
+            for key, value in matches:
+                # Try to convert to appropriate type
+                if value.lower() == 'true':
+                    params[key] = True
+                elif value.lower() == 'false':
+                    params[key] = False
+                elif value.replace('.', '', 1).replace('-', '', 1).isdigit():
+                    params[key] = float(value) if '.' in value else int(value)
+                else:
+                    params[key] = value
+            return params
 
     @staticmethod
     def _parse_text(text: str) -> Dict:
@@ -204,19 +315,34 @@ class TradingViewAlertParser:
         Returns:
             tuple: (is_valid: bool, error_message: Optional[str])
         """
+        issues = []
+
         if not params.get('symbol'):
-            return False, "Missing trading symbol"
+            issues.append("Missing or empty 'symbol' field")
 
         if params.get('action') not in ['buy', 'sell']:
-            return False, f"Invalid action: {params.get('action')}"
+            issues.append(f"Invalid or missing 'action': got '{params.get('action')}' (expected 'buy' or 'sell')")
 
         if not params.get('quantity') or params['quantity'] <= 0:
-            return False, "Invalid quantity: must be greater than 0"
+            issues.append(f"Invalid or missing 'quantity': got '{params.get('quantity')}' (must be > 0)")
 
         if params.get('order_type') == 'limit' and not params.get('price'):
-            return False, "Limit orders require a price"
+            issues.append("Limit orders require a 'price'")
 
         if params.get('order_type') == 'trailing' and not params.get('trailing_stop_pct'):
-            return False, "Trailing stop orders require trailing_stop_pct"
+            issues.append("Trailing stop orders require 'trailing_stop_pct'")
+
+        if issues:
+            # Provide detailed feedback about what fields were found
+            metadata = params.get('metadata', {})
+            found_fields = [k for k, v in params.items() if v and k != 'metadata']
+            if metadata:
+                found_fields.extend([f"metadata.{k}" for k in metadata.keys() if metadata.get(k)])
+
+            error_msg = "; ".join(issues)
+            if found_fields:
+                error_msg += f" | Found fields: {', '.join(found_fields)}"
+
+            return False, error_msg
 
         return True, None

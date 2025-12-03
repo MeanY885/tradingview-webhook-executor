@@ -106,7 +106,8 @@ class BlofinClient:
         size: float,
         client_order_id: Optional[str] = None,
         stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None
+        take_profit: Optional[float] = None,
+        leverage: Optional[float] = None
     ) -> Dict:
         """
         Place market order on Blofin.
@@ -118,17 +119,30 @@ class BlofinClient:
             client_order_id: Custom order ID
             stop_loss: Stop loss price (optional)
             take_profit: Take profit price (optional)
+            leverage: Leverage multiplier (e.g., 5 for 5x). If provided, uses cross margin mode.
 
         Returns:
             API response
         """
+        # Determine trading mode based on leverage
+        if leverage and leverage > 1:
+            td_mode = "cross"  # Cross margin for leveraged trades
+            logger.info(f"Using cross margin mode with {leverage}x leverage")
+        else:
+            td_mode = "cash"  # Spot trading
+            logger.info("Using spot trading mode")
+
         payload = {
             "instId": symbol,
-            "tdMode": "cash",  # Cash/spot trading
+            "tdMode": td_mode,
             "side": side.lower(),
             "ordType": "market",
             "sz": str(size)
         }
+
+        # Add leverage if using margin mode
+        if leverage and leverage > 1:
+            payload["lever"] = str(int(leverage))
 
         if client_order_id:
             payload["clOrdId"] = client_order_id
@@ -140,7 +154,7 @@ class BlofinClient:
         if stop_loss or take_profit:
             logger.warning("Stop loss and take profit must be set as separate orders on Blofin")
 
-        logger.info(f"Placing Blofin market order: {side} {size} {symbol}")
+        logger.info(f"Placing Blofin market order: {side} {size} {symbol} (leverage: {leverage or 'none'})")
         result = self._make_request("POST", "/api/v1/trade/order", payload)
 
         # If successful and SL/TP requested, place them as separate orders
@@ -159,7 +173,8 @@ class BlofinClient:
         price: float,
         client_order_id: Optional[str] = None,
         stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None
+        take_profit: Optional[float] = None,
+        leverage: Optional[float] = None
     ) -> Dict:
         """
         Place limit order on Blofin.
@@ -172,18 +187,31 @@ class BlofinClient:
             client_order_id: Custom order ID
             stop_loss: Stop loss price (optional)
             take_profit: Take profit price (optional)
+            leverage: Leverage multiplier (e.g., 5 for 5x). If provided, uses cross margin mode.
 
         Returns:
             API response
         """
+        # Determine trading mode based on leverage
+        if leverage and leverage > 1:
+            td_mode = "cross"  # Cross margin for leveraged trades
+            logger.info(f"Using cross margin mode with {leverage}x leverage")
+        else:
+            td_mode = "cash"  # Spot trading
+            logger.info("Using spot trading mode")
+
         payload = {
             "instId": symbol,
-            "tdMode": "cash",
+            "tdMode": td_mode,
             "side": side.lower(),
             "ordType": "limit",
             "sz": str(size),
             "px": str(price)
         }
+
+        # Add leverage if using margin mode
+        if leverage and leverage > 1:
+            payload["lever"] = str(int(leverage))
 
         if client_order_id:
             payload["clOrdId"] = client_order_id
@@ -191,7 +219,7 @@ class BlofinClient:
         if stop_loss or take_profit:
             logger.warning("Stop loss and take profit must be set as separate orders on Blofin")
 
-        logger.info(f"Placing Blofin limit order: {side} {size} {symbol} @ {price}")
+        logger.info(f"Placing Blofin limit order: {side} {size} {symbol} @ {price} (leverage: {leverage or 'none'})")
         return self._make_request("POST", "/api/v1/trade/order", payload)
 
     def get_account_balance(self) -> Dict:

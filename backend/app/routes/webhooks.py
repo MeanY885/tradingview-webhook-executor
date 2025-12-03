@@ -17,37 +17,55 @@ bp = Blueprint('webhooks', __name__)
 logger = logging.getLogger(__name__)
 
 
-@bp.route('/blofin/<webhook_token>', methods=['POST'])
-def tradingview_blofin_webhook(webhook_token):
-    """Receive TradingView webhook for Blofin (crypto trading)."""
-    return _process_webhook('blofin', webhook_token)
+@bp.route('/blofin/<webhook_identifier>', methods=['POST'])
+def tradingview_blofin_webhook(webhook_identifier):
+    """Receive TradingView webhook for Blofin (crypto trading).
+
+    Accepts either username or webhook token.
+    Examples:
+    - /blofin/chrise885
+    - /blofin/a8f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5
+    """
+    return _process_webhook('blofin', webhook_identifier)
 
 
-@bp.route('/oanda/<webhook_token>', methods=['POST'])
-def tradingview_oanda_webhook(webhook_token):
-    """Receive TradingView webhook for Oanda (forex trading)."""
-    return _process_webhook('oanda', webhook_token)
+@bp.route('/oanda/<webhook_identifier>', methods=['POST'])
+def tradingview_oanda_webhook(webhook_identifier):
+    """Receive TradingView webhook for Oanda (forex trading).
+
+    Accepts either username or webhook token.
+    Examples:
+    - /oanda/chrise885
+    - /oanda/a8f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5
+    """
+    return _process_webhook('oanda', webhook_identifier)
 
 
-def _process_webhook(broker: str, webhook_token: str):
+def _process_webhook(broker: str, webhook_identifier: str):
     """
     Common webhook processing logic.
 
     Args:
         broker: 'blofin' or 'oanda'
-        webhook_token: User's webhook token from URL
+        webhook_identifier: User's webhook token OR username from URL
 
     Returns:
         JSON response with success/error status
     """
     log_entry = None
     user = None
+    raw_payload = None
 
     try:
-        # 1. Authenticate via webhook token in URL
-        user = User.query.filter_by(webhook_token=webhook_token, is_active=True).first()
+        # 1. Authenticate via webhook identifier (username or token) in URL
+        # Try username first (more user-friendly), then fall back to token
+        user = User.query.filter_by(username=webhook_identifier, is_active=True).first()
         if not user:
-            logger.warning(f"Invalid webhook token: {webhook_token[:8]}... from IP: {request.remote_addr}")
+            # Fall back to token-based lookup (backwards compatibility)
+            user = User.query.filter_by(webhook_token=webhook_identifier, is_active=True).first()
+
+        if not user:
+            logger.warning(f"Invalid webhook identifier: {webhook_identifier[:8]}... from IP: {request.remote_addr}")
             return jsonify({'success': False, 'error': 'Invalid webhook URL'}), 401
 
         # 2. Check IP whitelist
@@ -56,11 +74,11 @@ def _process_webhook(broker: str, webhook_token: str):
             logger.warning(f"IP {client_ip} not whitelisted for user {user.id}")
             return jsonify({'success': False, 'error': 'IP address not authorized'}), 403
 
-        # 3. Get raw payload
+        # 3. Get raw payload - ALWAYS capture this first
         raw_payload = request.get_data(as_text=True)
-        logger.info(f"Received webhook for user {user.id} ({broker}) from IP {client_ip}: {raw_payload[:100]}")
+        logger.info(f"Received webhook for user {user.id} ({broker}) from IP {client_ip}: {raw_payload[:200]}")
 
-        # 3. Parse alert
+        # 4. Parse alert - use lenient mode to capture unknown formats
         parser = TradingViewAlertParser()
         params = parser.parse_alert(raw_payload)
 
@@ -141,16 +159,39 @@ def _process_webhook(broker: str, webhook_token: str):
         })
 
     except ValueError as e:
-        # Parse error
+        # Parse error - still create log entry to capture the raw payload
         logger.error(f"Parse error: {e}")
-        if log_entry:
-            log_entry.status = 'invalid'
-            log_entry.error_message = str(e)
+
+        # Create log entry even if parsing failed (for discovery/debugging)
+        if not log_entry and user and raw_payload:
+            try:
+                log_entry = WebhookLog(
+                    user_id=user.id,
+                    raw_payload=raw_payload,
+                    source_ip=request.remote_addr,
+                    broker=broker,
+                    status='parse_error',
+                    error_message=f"Parse error: {str(e)}",
+                    client_order_id=f"TV-{uuid.uuid4().hex[:12]}"
+                )
+                db.session.add(log_entry)
+                db.session.commit()
+                broadcast_webhook_event(user.id, log_entry)
+            except Exception as db_error:
+                logger.error(f"Failed to create log entry for parse error: {db_error}")
+        elif log_entry:
+            log_entry.status = 'parse_error'
+            log_entry.error_message = f"Parse error: {str(e)}"
             db.session.commit()
             if user:
                 broadcast_webhook_event(user.id, log_entry)
 
-        return jsonify({'success': False, 'error': str(e)}), 400
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'webhook_log_id': log_entry.id if log_entry else None,
+            'note': 'Raw payload saved for inspection'
+        }), 400
 
     except Exception as e:
         logger.error(f"Error processing webhook: {e}", exc_info=True)
@@ -166,8 +207,18 @@ def _process_webhook(broker: str, webhook_token: str):
 
 def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, status='pending', error=None):
     """Create webhook log entry."""
+    import json
+
     # Generate unique client order ID
     client_order_id = f"TV-{uuid.uuid4().hex[:12]}"
+
+    # Serialize metadata to JSON
+    metadata_json = None
+    if params.get('metadata'):
+        try:
+            metadata_json = json.dumps(params['metadata'])
+        except (TypeError, ValueError):
+            logger.warning(f"Failed to serialize metadata to JSON: {params.get('metadata')}")
 
     log = WebhookLog(
         user_id=user_id,
@@ -183,6 +234,8 @@ def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, sta
         stop_loss=params.get('stop_loss'),
         take_profit=params.get('take_profit'),
         trailing_stop_pct=params.get('trailing_stop_pct'),
+        leverage=params.get('leverage'),
+        metadata_json=metadata_json,
         status=status,
         client_order_id=client_order_id,
         error_message=error
@@ -220,7 +273,8 @@ def _execute_blofin_trade(cred, params, log_entry):
             size=params['quantity'],
             client_order_id=log_entry.client_order_id,
             stop_loss=params.get('stop_loss'),
-            take_profit=params.get('take_profit')
+            take_profit=params.get('take_profit'),
+            leverage=params.get('leverage')
         )
     elif params['order_type'] == 'limit':
         if not params.get('price'):
@@ -232,7 +286,8 @@ def _execute_blofin_trade(cred, params, log_entry):
             price=params['price'],
             client_order_id=log_entry.client_order_id,
             stop_loss=params.get('stop_loss'),
-            take_profit=params.get('take_profit')
+            take_profit=params.get('take_profit'),
+            leverage=params.get('leverage')
         )
     else:
         raise ValueError(f"Unsupported order type: {params['order_type']}")

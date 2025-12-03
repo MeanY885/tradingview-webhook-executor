@@ -52,6 +52,11 @@ class User(db.Model):
             # Include webhook URLs for settings page
             base_url = Config.BASE_URL or 'https://your-domain.com'
             data['webhook_urls'] = {
+                'blofin': f"{base_url}/blofin/{self.username}",
+                'oanda': f"{base_url}/oanda/{self.username}"
+            }
+            # Also include legacy token-based URLs for backwards compatibility
+            data['webhook_urls_legacy'] = {
                 'blofin': f"{base_url}/blofin/{self.webhook_token}",
                 'oanda': f"{base_url}/oanda/{self.webhook_token}"
             }

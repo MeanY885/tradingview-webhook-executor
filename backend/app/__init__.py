@@ -23,6 +23,16 @@ def create_app(config_class=Config):
         }
     })
 
+    # Run database migrations on startup
+    with app.app_context():
+        try:
+            from app.migrations import run_migrations
+            run_migrations()
+        except Exception as e:
+            app.logger.error(f"Failed to run migrations: {e}")
+            # Don't crash the app, but log the error
+            # Migrations might fail if database isn't ready yet
+
     # Register blueprints
     from app.routes import auth, webhooks, webhook_logs, credentials
     app.register_blueprint(auth.bp)
