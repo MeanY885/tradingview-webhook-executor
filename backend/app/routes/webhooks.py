@@ -10,6 +10,7 @@ from app.services.blofin import BlofinClient
 from app.services.oanda import OandaClient
 from app.services.encryption import encryption_service
 from app.services.websocket import broadcast_webhook_event
+from app.services.trade_grouping import TradeGroupingService
 import logging
 import uuid
 
@@ -214,11 +215,20 @@ def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, sta
 
     # Serialize metadata to JSON
     metadata_json = None
-    if params.get('metadata'):
+    metadata = params.get('metadata', {})
+    if metadata:
         try:
-            metadata_json = json.dumps(params['metadata'])
+            metadata_json = json.dumps(metadata)
         except (TypeError, ValueError):
-            logger.warning(f"Failed to serialize metadata to JSON: {params.get('metadata')}")
+            logger.warning(f"Failed to serialize metadata to JSON: {metadata}")
+
+    # Determine trade group and direction
+    trade_group_id, trade_direction = TradeGroupingService.determine_trade_group(
+        user_id=user_id,
+        symbol=params['symbol'],
+        params=params,
+        metadata=metadata
+    )
 
     log = WebhookLog(
         user_id=user_id,
@@ -235,6 +245,8 @@ def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, sta
         take_profit=params.get('take_profit'),
         trailing_stop_pct=params.get('trailing_stop_pct'),
         leverage=params.get('leverage'),
+        trade_group_id=trade_group_id,
+        trade_direction=trade_direction,
         metadata_json=metadata_json,
         status=status,
         client_order_id=client_order_id,

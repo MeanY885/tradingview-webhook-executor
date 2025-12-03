@@ -32,6 +32,10 @@ class WebhookLog(db.Model):
     # Additional metadata (stored as JSON for flexibility)
     metadata_json = db.Column(db.Text)  # Stores TradingView metadata, alert_message_params, etc.
 
+    # Trade grouping
+    trade_group_id = db.Column(db.String(50))  # Auto-generated ID to group related trades
+    trade_direction = db.Column(db.String(10))  # 'long' or 'short' - direction of the trade
+
     # Execution status
     status = db.Column(db.String(20), nullable=False)  # 'success', 'failed', 'invalid', 'test_success'
     broker_order_id = db.Column(db.String(50))
@@ -68,6 +72,8 @@ class WebhookLog(db.Model):
             'stop_loss': self.stop_loss,
             'take_profit': self.take_profit,
             'leverage': self.leverage,
+            'trade_group_id': self.trade_group_id,
+            'trade_direction': self.trade_direction,
             'metadata': metadata,
             'status': self.status,
             'broker_order_id': self.broker_order_id,

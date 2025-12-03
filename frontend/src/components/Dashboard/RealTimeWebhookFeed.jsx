@@ -87,6 +87,17 @@ const RealTimeWebhookFeed = ({ webhooks, loading, onWebhookDeleted }) => {
                     size="small"
                     color={webhook.broker === 'blofin' ? 'primary' : 'secondary'}
                   />
+                  {webhook.trade_direction && (
+                    <Chip
+                      label={webhook.trade_direction.toUpperCase()}
+                      size="small"
+                      sx={{
+                        bgcolor: webhook.trade_direction === 'long' ? 'success.main' : 'error.main',
+                        color: 'white',
+                        fontWeight: 'bold'
+                      }}
+                    />
+                  )}
                   <Typography variant="body1" component="span">
                     {webhook.action?.toUpperCase()} {webhook.quantity} {webhook.symbol}
                   </Typography>
@@ -104,6 +115,11 @@ const RealTimeWebhookFeed = ({ webhooks, loading, onWebhookDeleted }) => {
               }
               secondary={
                 <>
+                  {webhook.trade_group_id && (
+                    <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'text.disabled' }} component="div">
+                      Group: {webhook.trade_group_id}
+                    </Typography>
+                  )}
                   <Typography variant="body2" color="text.secondary" component="span">
                     Status: {webhook.status}
                   </Typography>

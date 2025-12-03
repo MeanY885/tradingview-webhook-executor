@@ -88,6 +88,31 @@ const WebhookDetailModal = ({ webhook, open, onClose, onDelete }) => {
             <Typography color="text.secondary">ID:</Typography>
             <Typography>{webhook.id}</Typography>
 
+            {webhook.trade_group_id && (
+              <>
+                <Typography color="text.secondary">Trade Group:</Typography>
+                <Typography sx={{ fontFamily: 'monospace', fontSize: '0.9em' }}>
+                  {webhook.trade_group_id}
+                </Typography>
+              </>
+            )}
+
+            {webhook.trade_direction && (
+              <>
+                <Typography color="text.secondary">Trade Direction:</Typography>
+                <Chip
+                  label={webhook.trade_direction.toUpperCase()}
+                  size="small"
+                  sx={{
+                    bgcolor: webhook.trade_direction === 'long' ? 'success.main' : 'error.main',
+                    color: 'white',
+                    fontWeight: 'bold',
+                    width: 'fit-content'
+                  }}
+                />
+              </>
+            )}
+
             <Typography color="text.secondary">Timestamp:</Typography>
             <Typography>
               {webhook.timestamp ? format(new Date(webhook.timestamp), 'MMM dd, yyyy HH:mm:ss') : 'N/A'}
