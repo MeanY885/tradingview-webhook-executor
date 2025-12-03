@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
 import {
   List, ListItem, ListItemText, Chip, Box,
-  Typography, CircularProgress
+  Typography, CircularProgress, IconButton, Tooltip
 } from '@mui/material'
-import { CheckCircle, Error, Pending } from '@mui/icons-material'
+import { CheckCircle, Error, Pending, Delete as DeleteIcon } from '@mui/icons-material'
 import { format } from 'date-fns'
 import WebhookDetailModal from './WebhookDetailModal'
+import api from '../../services/api'
 
 const StatusIcon = ({ status }) => {
   switch (status) {
@@ -37,6 +38,22 @@ const RealTimeWebhookFeed = ({ webhooks, loading, onWebhookDeleted }) => {
   const handleDelete = (webhookId) => {
     if (onWebhookDeleted) {
       onWebhookDeleted(webhookId)
+    }
+  }
+
+  const handleQuickDelete = async (e, webhook) => {
+    e.stopPropagation() // Prevent opening the modal
+
+    if (!window.confirm(`Delete webhook: ${webhook.action?.toUpperCase()} ${webhook.quantity} ${webhook.symbol}?`)) {
+      return
+    }
+
+    try {
+      await api.delete(`/api/webhook-logs/${webhook.id}`)
+      handleDelete(webhook.id)
+    } catch (error) {
+      console.error('Error deleting webhook:', error)
+      alert('Failed to delete webhook')
     }
   }
 
@@ -143,6 +160,22 @@ const RealTimeWebhookFeed = ({ webhooks, loading, onWebhookDeleted }) => {
                 </>
               }
             />
+            <Tooltip title="Delete webhook">
+              <IconButton
+                edge="end"
+                aria-label="delete"
+                onClick={(e) => handleQuickDelete(e, webhook)}
+                sx={{
+                  color: 'error.main',
+                  '&:hover': {
+                    bgcolor: 'error.dark',
+                    color: 'white'
+                  }
+                }}
+              >
+                <DeleteIcon />
+              </IconButton>
+            </Tooltip>
           </Box>
         </ListItem>
       ))}
