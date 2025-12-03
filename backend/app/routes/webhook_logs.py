@@ -62,3 +62,25 @@ def get_webhook_stats():
     return jsonify({
         'by_status': {stat.status: stat.count for stat in stats}
     })
+
+
+@bp.route('/<int:log_id>', methods=['DELETE'])
+@jwt_required()
+def delete_webhook_log(log_id):
+    """Delete a webhook log entry."""
+    user_id = int(get_jwt_identity())
+
+    # Find the log entry
+    log = WebhookLog.query.filter_by(id=log_id, user_id=user_id).first()
+
+    if not log:
+        return jsonify({'success': False, 'error': 'Webhook log not found'}), 404
+
+    # Delete the log
+    db.session.delete(log)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'message': 'Webhook log deleted successfully'
+    })

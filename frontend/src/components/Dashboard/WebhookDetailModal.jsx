@@ -1,12 +1,36 @@
-import React from 'react'
+import React, { useState } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
-  Button, Box, Typography, Chip, Divider, Paper
+  Button, Box, Typography, Chip, Divider, Paper, IconButton, Tooltip
 } from '@mui/material'
+import { Delete as DeleteIcon } from '@mui/icons-material'
 import { format } from 'date-fns'
+import api from '../../services/api'
 
-const WebhookDetailModal = ({ webhook, open, onClose }) => {
+const WebhookDetailModal = ({ webhook, open, onClose, onDelete }) => {
+  const [deleting, setDeleting] = useState(false)
+
   if (!webhook) return null
+
+  const handleDelete = async () => {
+    if (!window.confirm('Are you sure you want to delete this webhook log?')) {
+      return
+    }
+
+    setDeleting(true)
+    try {
+      await api.delete(`/api/webhook-logs/${webhook.id}`)
+      if (onDelete) {
+        onDelete(webhook.id)
+      }
+      onClose()
+    } catch (error) {
+      console.error('Error deleting webhook:', error)
+      alert('Failed to delete webhook log')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const renderJsonSection = (title, data) => {
     if (!data) return null
@@ -164,7 +188,17 @@ const WebhookDetailModal = ({ webhook, open, onClose }) => {
       </DialogContent>
 
       <DialogActions>
-        <Button onClick={onClose}>Close</Button>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+          <Button
+            onClick={handleDelete}
+            color="error"
+            startIcon={<DeleteIcon />}
+            disabled={deleting}
+          >
+            {deleting ? 'Deleting...' : 'Delete'}
+          </Button>
+          <Button onClick={onClose}>Close</Button>
+        </Box>
       </DialogActions>
     </Dialog>
   )

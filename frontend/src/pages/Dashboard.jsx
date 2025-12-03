@@ -58,6 +58,13 @@ const Dashboard = () => {
     }
   }
 
+  const handleWebhookDeleted = (webhookId) => {
+    // Remove the webhook from the local state
+    setRecentWebhooks(prev => prev.filter(webhook => webhook.id !== webhookId))
+    // Refresh stats
+    fetchStats()
+  }
+
   return (
     <Box>
       <Typography variant="h4" gutterBottom>
@@ -74,7 +81,11 @@ const Dashboard = () => {
             <Typography variant="h6" gutterBottom>
               Real-Time Webhook Feed
             </Typography>
-            <RealTimeWebhookFeed webhooks={recentWebhooks} loading={loading} />
+            <RealTimeWebhookFeed
+              webhooks={recentWebhooks}
+              loading={loading}
+              onWebhookDeleted={handleWebhookDeleted}
+            />
           </Paper>
         </Grid>
       </Grid>

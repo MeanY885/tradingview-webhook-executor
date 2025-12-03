@@ -20,7 +20,7 @@ const StatusIcon = ({ status }) => {
   }
 }
 
-const RealTimeWebhookFeed = ({ webhooks, loading }) => {
+const RealTimeWebhookFeed = ({ webhooks, loading, onWebhookDeleted }) => {
   const [selectedWebhook, setSelectedWebhook] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -32,6 +32,12 @@ const RealTimeWebhookFeed = ({ webhooks, loading }) => {
   const handleCloseModal = () => {
     setModalOpen(false)
     setSelectedWebhook(null)
+  }
+
+  const handleDelete = (webhookId) => {
+    if (onWebhookDeleted) {
+      onWebhookDeleted(webhookId)
+    }
   }
 
   if (loading) {
@@ -130,6 +136,7 @@ const RealTimeWebhookFeed = ({ webhooks, loading }) => {
       webhook={selectedWebhook}
       open={modalOpen}
       onClose={handleCloseModal}
+      onDelete={handleDelete}
     />
   </>
   )
