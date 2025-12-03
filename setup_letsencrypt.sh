@@ -45,14 +45,36 @@ sed -i 's/"8887:80"/"80:80"/g' docker-compose.yml
 echo "✓ Ports updated to 443:443 and 80:80"
 echo ""
 
-# Step 5: Install certbot
+# Step 5: Install certbot (using snap - recommended method)
 echo "[5/9] Installing certbot..."
 if ! command -v certbot &> /dev/null; then
-    sudo apt update
-    sudo apt install certbot -y
-    echo "✓ Certbot installed"
+    # Remove old apt-based certbot if it exists
+    sudo apt remove certbot -y 2>/dev/null || true
+
+    # Install snapd if not present
+    if ! command -v snap &> /dev/null; then
+        sudo apt update
+        sudo apt install snapd -y
+        sudo systemctl enable --now snapd.socket
+        sleep 2
+    fi
+
+    # Install certbot via snap
+    sudo snap install --classic certbot
+    sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+    echo "✓ Certbot installed via snap"
 else
-    echo "✓ Certbot already installed"
+    # Check if it's the old apt version
+    CERTBOT_VERSION=$(certbot --version 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+    if [[ "$CERTBOT_VERSION" < "1.0.0" ]]; then
+        echo "Old certbot version detected, upgrading..."
+        sudo apt remove certbot -y
+        sudo snap install --classic certbot
+        sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+        echo "✓ Certbot upgraded via snap"
+    else
+        echo "✓ Certbot already installed"
+    fi
 fi
 echo ""
 
