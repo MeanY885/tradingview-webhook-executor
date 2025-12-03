@@ -1,0 +1,36 @@
+#!/bin/bash
+# Remote server deployment script
+# Usage: ./deploy.sh
+
+set -e  # Exit on error
+
+echo "🚀 Starting deployment..."
+
+# Pull latest code
+echo "📥 Pulling latest code from GitHub..."
+git pull origin main
+
+# Stop containers
+echo "🛑 Stopping containers..."
+docker-compose down
+
+# Remove old frontend image and clear cache
+echo "🗑️  Removing old frontend image and clearing cache..."
+docker rmi tradingview-webhook-executor-frontend 2>/dev/null || true
+docker builder prune -f
+
+# Rebuild and start
+echo "🔨 Rebuilding services..."
+docker-compose build --no-cache frontend
+docker-compose up -d
+
+# Wait and show status
+echo "⏳ Waiting for services..."
+sleep 5
+
+echo ""
+echo "✅ Deployment complete!"
+docker-compose ps
+echo ""
+echo "🌐 https://webhook.eddisford.co.uk"
+echo "💡 Hard refresh browser: Cmd+Shift+R or Ctrl+Shift+F5"
