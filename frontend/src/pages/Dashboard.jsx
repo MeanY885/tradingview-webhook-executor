@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react'
-import { Grid, Paper, Typography, Box } from '@mui/material'
+import { Grid, Paper, Typography, Box, ToggleButtonGroup, ToggleButton } from '@mui/material'
+import { ViewList, ViewModule } from '@mui/icons-material'
 import { getSocket } from '../services/socket'
 import api from '../services/api'
 import RealTimeWebhookFeed from '../components/Dashboard/RealTimeWebhookFeed'
+import TradeGroupsView from '../components/Dashboard/TradeGroupsView'
 import StatisticsCards from '../components/Dashboard/StatisticsCards'
 
 const Dashboard = () => {
   const [recentWebhooks, setRecentWebhooks] = useState([])
   const [stats, setStats] = useState({})
   const [loading, setLoading] = useState(true)
+  const [viewMode, setViewMode] = useState('grouped') // 'list' or 'grouped'
 
   useEffect(() => {
     // Fetch initial webhook logs
@@ -78,14 +81,39 @@ const Dashboard = () => {
 
         <Grid item xs={12}>
           <Paper sx={{ p: 3 }}>
-            <Typography variant="h6" gutterBottom>
-              Real-Time Webhook Feed
-            </Typography>
-            <RealTimeWebhookFeed
-              webhooks={recentWebhooks}
-              loading={loading}
-              onWebhookDeleted={handleWebhookDeleted}
-            />
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6">
+                {viewMode === 'grouped' ? 'Trade Groups' : 'Real-Time Webhook Feed'}
+              </Typography>
+              <ToggleButtonGroup
+                value={viewMode}
+                exclusive
+                onChange={(e, newMode) => newMode && setViewMode(newMode)}
+                size="small"
+              >
+                <ToggleButton value="grouped">
+                  <ViewModule sx={{ mr: 1 }} fontSize="small" />
+                  Grouped
+                </ToggleButton>
+                <ToggleButton value="list">
+                  <ViewList sx={{ mr: 1 }} fontSize="small" />
+                  List
+                </ToggleButton>
+              </ToggleButtonGroup>
+            </Box>
+
+            {viewMode === 'grouped' ? (
+              <TradeGroupsView
+                webhooks={recentWebhooks}
+                onWebhookDeleted={handleWebhookDeleted}
+              />
+            ) : (
+              <RealTimeWebhookFeed
+                webhooks={recentWebhooks}
+                loading={loading}
+                onWebhookDeleted={handleWebhookDeleted}
+              />
+            )}
           </Paper>
         </Grid>
       </Grid>
