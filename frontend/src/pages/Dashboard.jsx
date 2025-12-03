@@ -23,7 +23,8 @@ const Dashboard = () => {
     if (socket) {
       socket.on('webhook_received', (data) => {
         console.log('Webhook received:', data)
-        setRecentWebhooks(prev => [data, ...prev].slice(0, 20))
+        // Refetch logs to get proper grouping
+        fetchRecentLogs()
         // Refresh stats
         fetchStats()
       })
