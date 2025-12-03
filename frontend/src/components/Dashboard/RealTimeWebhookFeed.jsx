@@ -1,10 +1,11 @@
-import React from 'react'
+import React, { useState } from 'react'
 import {
   List, ListItem, ListItemText, Chip, Box,
   Typography, CircularProgress
 } from '@mui/material'
 import { CheckCircle, Error, Pending } from '@mui/icons-material'
 import { format } from 'date-fns'
+import WebhookDetailModal from './WebhookDetailModal'
 
 const StatusIcon = ({ status }) => {
   switch (status) {
@@ -20,6 +21,19 @@ const StatusIcon = ({ status }) => {
 }
 
 const RealTimeWebhookFeed = ({ webhooks, loading }) => {
+  const [selectedWebhook, setSelectedWebhook] = useState(null)
+  const [modalOpen, setModalOpen] = useState(false)
+
+  const handleWebhookClick = (webhook) => {
+    setSelectedWebhook(webhook)
+    setModalOpen(true)
+  }
+
+  const handleCloseModal = () => {
+    setModalOpen(false)
+    setSelectedWebhook(null)
+  }
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
@@ -37,19 +51,26 @@ const RealTimeWebhookFeed = ({ webhooks, loading }) => {
   }
 
   return (
-    <List>
-      {webhooks.map((webhook) => (
-        <ListItem
-          key={webhook.id}
-          divider
-          sx={{
-            animation: 'fadeIn 0.5s',
-            '@keyframes fadeIn': {
-              from: { opacity: 0, transform: 'translateY(-10px)' },
-              to: { opacity: 1, transform: 'translateY(0)' }
-            }
-          }}
-        >
+    <>
+      <List>
+        {webhooks.map((webhook) => (
+          <ListItem
+            key={webhook.id}
+            divider
+            button
+            onClick={() => handleWebhookClick(webhook)}
+            sx={{
+              animation: 'fadeIn 0.5s',
+              cursor: 'pointer',
+              '&:hover': {
+                bgcolor: 'action.hover'
+              },
+              '@keyframes fadeIn': {
+                from: { opacity: 0, transform: 'translateY(-10px)' },
+                to: { opacity: 1, transform: 'translateY(0)' }
+              }
+            }}
+          >
           <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', gap: 2 }}>
             <StatusIcon status={webhook.status} />
             <ListItemText
@@ -104,6 +125,13 @@ const RealTimeWebhookFeed = ({ webhooks, loading }) => {
         </ListItem>
       ))}
     </List>
+
+    <WebhookDetailModal
+      webhook={selectedWebhook}
+      open={modalOpen}
+      onClose={handleCloseModal}
+    />
+  </>
   )
 }
 

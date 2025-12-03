@@ -71,6 +71,8 @@ class WebhookLog(db.Model):
             'metadata': metadata,
             'status': self.status,
             'broker_order_id': self.broker_order_id,
+            'client_order_id': self.client_order_id,
             'error_message': self.error_message,
+            'raw_payload': self.raw_payload,  # Include raw payload for debugging
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
