@@ -145,9 +145,26 @@ class TradeGroupingService:
                 market_position = metadata.get('market_position', '').lower()
                 position_size = metadata.get('position_size', '')
 
-                # If market position is not flat and position size is not 0, group is still open
-                if market_position not in ['flat', '0', ''] or str(position_size) != '0':
-                    logger.info(f"Found active trade group: {log.trade_group_id}")
+                # Check if position is still open
+                is_position_open = False
+
+                # Check market_position
+                if market_position and market_position not in ['flat', '0', '']:
+                    is_position_open = True
+
+                # Check position_size (handle both string and numeric)
+                if position_size:
+                    try:
+                        size_float = float(str(position_size))
+                        if size_float != 0:
+                            is_position_open = True
+                    except (ValueError, TypeError):
+                        pass
+
+                if is_position_open:
+                    logger.info(f"Found active trade group: {log.trade_group_id} (position: {market_position}, size: {position_size})")
                     return log.trade_group_id
+                else:
+                    logger.debug(f"Trade group {log.trade_group_id} is closed (position: {market_position}, size: {position_size})")
 
         return None
