@@ -28,6 +28,10 @@ docker-compose up -d
 echo "⏳ Waiting for services..."
 sleep 5
 
+# Run database migrations
+echo "🗄️  Running database migrations..."
+docker compose exec -T backend python -c "from app.migrations import run_migrations; run_migrations()"
+
 echo ""
 echo "✅ Deployment complete!"
 docker-compose ps
