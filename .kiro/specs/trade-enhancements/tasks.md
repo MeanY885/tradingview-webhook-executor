@@ -1,0 +1,153 @@
+# Implementation Plan
+
+- [x] 1. Extend WebhookNormalizer for flexible JSON format support
+  - [x] 1.1 Add new fields to NormalizedWebhook dataclass
+    - Add `exit_stop`, `exit_limit`, `exit_loss_ticks`, `exit_profit_ticks` fields
+    - Add `exit_trail_price`, `exit_trail_offset` for trailing stops
+    - Add `plot_values` dict for custom indicator values
+    - _Requirements: 1.1, 1.2, 2.2, 2.5, 5.1, 5.2_
+  - [x] 1.2 Implement field mapping in normalize() method
+    - Map `exit_stop` → `stop_loss_price`, `exit_limit` → `take_profit_price`
+    - Handle `ticker` as alias for `symbol`
+    - Use `position_avg_price` as fallback for `entry_price`
+    - Extract `plot_N` fields into `plot_values` dict
+    - _Requirements: 2.1, 2.3, 2.4, 2.5_
+  - [x] 1.3 Ensure type coercion handles strings and numbers
+    - Update `_parse_float` to handle edge cases
+    - Add tests for string/number price and quantity values
+    - _Requirements: 2.6_
+  - [x] 1.4 Write property test for exit strategy field extraction
+    - **Property 1: Exit Strategy Field Extraction**
+    - **Validates: Requirements 1.1, 1.2**
+  - [x] 1.5 Write property test for field mapping
+    - **Property 2: Field Mapping Consistency**
+    - **Validates: Requirements 2.1**
+  - [x] 1.6 Write property test for trailing stop extraction
+    - **Property 3: Trailing Stop Extraction**
+    - **Validates: Requirements 2.2, 5.1, 5.2**
+  - [x] 1.7 Write property test for symbol aliasing
+    - **Property 4: Symbol Field Aliasing**
+    - **Validates: Requirements 2.3**
+  - [x] 1.8 Write property test for entry price from position average
+    - **Property 5: Entry Price from Position Average**
+    - **Validates: Requirements 2.4**
+  - [x] 1.9 Write property test for plot values extraction
+    - **Property 6: Plot Values Extraction**
+    - **Validates: Requirements 2.5**
+  - [x] 1.10 Write property test for type coercion
+    - **Property 7: Type Coercion for Prices and Quantities**
+    - **Validates: Requirements 2.6**
+
+- [x] 2. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 3. Add database schema for SL/TP tracking
+  - [x] 3.1 Create migration 008 for new columns
+    - Add `current_stop_loss`, `current_take_profit` columns
+    - Add `exit_trail_price`, `exit_trail_offset` columns
+    - Add `sl_changed`, `tp_changed` boolean flags
+    - _Requirements: 1.1, 1.3, 5.1, 5.2_
+  - [x] 3.2 Update WebhookLog model with new fields
+    - Add new columns to model class
+    - Update `to_dict()` to include new fields
+    - _Requirements: 1.1, 1.3, 5.1, 5.2_
+
+- [x] 4. Implement SL/TP change detection logic
+  - [x] 4.1 Add change detection in trade grouping service
+    - Compare current SL/TP with previous webhook in group
+    - Set `sl_changed`/`tp_changed` flags when values differ
+    - _Requirements: 1.3, 1.4_
+  - [x] 4.2 Add method to get most recent SL/TP for trade group
+    - Query latest webhook with non-null SL/TP values
+    - Return current SL, TP, and trailing stop info
+    - _Requirements: 1.5_
+  - [x] 4.3 Write property test for most recent SL/TP selection
+    - **Property 8: Most Recent SL/TP Selection**
+    - **Validates: Requirements 1.5**
+  - [x] 4.4 Write property test for SL/TP change detection
+    - **Property 9: SL/TP Change Detection**
+    - **Validates: Requirements 1.3**
+
+- [x] 5. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 6. Implement password change API
+  - [x] 6.1 Add change-password endpoint to auth routes
+    - Validate current password for self-change
+    - Allow admin to change other users' passwords
+    - Validate minimum password length (8 chars)
+    - Hash password with bcrypt before storage
+    - _Requirements: 4.2, 4.3, 4.4_
+  - [x] 6.2 Write property test for password verification requirement
+    - **Property 12: Password Verification Requirement**
+    - **Validates: Requirements 4.2**
+  - [x] 6.3 Write property test for password minimum length
+    - **Property 13: Password Minimum Length Validation**
+    - **Validates: Requirements 4.3**
+  - [x] 6.4 Write property test for password hashing
+    - **Property 14: Password Hashing**
+    - **Validates: Requirements 4.4**
+
+- [x] 7. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 8. Create TPCheckboxes frontend component
+  - [x] 8.1 Create TPCheckboxes component
+    - Display checkbox indicators for TP1, TP2, TP3
+    - Show checked state for hit TPs, unchecked for not hit
+    - Add tooltip with hit timestamp and exit price on hover
+    - Show "complete" indicator when all TPs hit
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+  - [x] 8.2 Add TP hit detection helper function
+    - Extract TP hit status from trade group webhooks
+    - Return TPHitStatus object with hit flags and details
+    - _Requirements: 3.2, 3.5_
+  - [x] 8.3 Write property test for TP hit detection
+    - **Property 10: TP Hit Detection**
+    - **Validates: Requirements 3.2**
+  - [x] 8.4 Write property test for all TPs complete detection
+    - **Property 11: All TPs Complete Detection**
+    - **Validates: Requirements 3.5**
+
+- [x] 9. Integrate TPCheckboxes into TradeGroupsView
+  - [x] 9.1 Add TPCheckboxes to trade group header
+    - Display next to existing TP levels hit chips
+    - Style consistently with existing UI
+    - _Requirements: 3.1_
+  - [x] 9.2 Add TPCheckboxes to trade summary section
+    - Show in expanded trade summary for closed trades
+    - Include hit details in summary
+    - _Requirements: 3.1, 3.4_
+
+- [x] 10. Create SLTPChangeIndicator component
+  - [x] 10.1 Create SLTPChangeIndicator component
+    - Display current SL/TP values
+    - Show change arrows when values differ from previous
+    - Include trailing stop info if available
+    - _Requirements: 1.3, 1.4, 5.3, 5.4_
+  - [x] 10.2 Integrate into trade timeline entries
+    - Show SL/TP values on each timeline entry
+    - Highlight changes between consecutive entries
+    - _Requirements: 1.3, 1.4_
+
+- [x] 11. Create PasswordChange frontend component
+  - [x] 11.1 Create PasswordChange component
+    - Form with current password, new password, confirm password fields
+    - Validation for minimum length and matching passwords
+    - Success/error feedback display
+    - _Requirements: 4.1, 4.3, 4.5, 4.6_
+  - [x] 11.2 Integrate into Settings page
+    - Add password change section to settings
+    - Style consistently with existing settings UI
+    - _Requirements: 4.1_
+
+- [x] 12. Update webhook processing to store new fields
+  - [x] 12.1 Update webhook handler to extract and store new fields
+    - Extract exit strategy fields from normalized webhook
+    - Store in webhook_log record
+    - Detect and flag SL/TP changes
+    - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2_
+
+- [x] 13. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+

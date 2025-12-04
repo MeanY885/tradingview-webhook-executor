@@ -467,3 +467,253 @@ class TradeGroupingService:
                 active_groups.append(log.trade_group_id)
         
         return active_groups
+
+    @staticmethod
+    def detect_sltp_changes(
+        trade_group_id: str,
+        current_sl: Optional[float],
+        current_tp: Optional[float]
+    ) -> Tuple[bool, bool]:
+        """
+        Detect if SL or TP values have changed from the previous webhook in the group.
+        
+        Compares the current SL/TP values with the most recent webhook in the group
+        that has non-null SL/TP values.
+        
+        Args:
+            trade_group_id: The trade group ID to check
+            current_sl: Current stop loss value (may be None)
+            current_tp: Current take profit value (may be None)
+            
+        Returns:
+            Tuple of (sl_changed, tp_changed) boolean flags
+            
+        Requirements: 1.3, 1.4
+        """
+        sl_changed = False
+        tp_changed = False
+        
+        # Get the previous webhook in this group with SL/TP values
+        previous_log = WebhookLog.query.filter(
+            WebhookLog.trade_group_id == trade_group_id
+        ).order_by(WebhookLog.timestamp.desc()).first()
+        
+        if not previous_log:
+            # No previous webhook, so no change to detect
+            return sl_changed, tp_changed
+        
+        # Get previous SL value (check current_stop_loss first, then stop_loss)
+        previous_sl = previous_log.current_stop_loss
+        if previous_sl is None:
+            previous_sl = previous_log.stop_loss
+        
+        # Get previous TP value (check current_take_profit first, then take_profit)
+        previous_tp = previous_log.current_take_profit
+        if previous_tp is None:
+            previous_tp = previous_log.take_profit
+        
+        # Detect SL change
+        if current_sl is not None and previous_sl is not None:
+            # Both have values - check if they differ
+            if abs(current_sl - previous_sl) > 0.0001:
+                sl_changed = True
+        elif current_sl is not None and previous_sl is None:
+            # New SL value where there was none before
+            sl_changed = True
+        # Note: We don't flag as changed if current_sl is None (SL removed)
+        
+        # Detect TP change
+        if current_tp is not None and previous_tp is not None:
+            # Both have values - check if they differ
+            if abs(current_tp - previous_tp) > 0.0001:
+                tp_changed = True
+        elif current_tp is not None and previous_tp is None:
+            # New TP value where there was none before
+            tp_changed = True
+        # Note: We don't flag as changed if current_tp is None (TP removed)
+        
+        logger.debug(
+            f"SL/TP change detection for {trade_group_id}: "
+            f"prev_sl={previous_sl}, curr_sl={current_sl}, sl_changed={sl_changed}, "
+            f"prev_tp={previous_tp}, curr_tp={current_tp}, tp_changed={tp_changed}"
+        )
+        
+        return sl_changed, tp_changed
+
+    @staticmethod
+    def get_most_recent_sltp(trade_group_id: str) -> dict:
+        """
+        Get the most recent SL/TP values for a trade group.
+        
+        Queries the latest webhook in the group that has non-null SL/TP values
+        and returns the current SL, TP, and trailing stop information.
+        
+        Args:
+            trade_group_id: The trade group ID to query
+            
+        Returns:
+            Dict with keys:
+                - current_stop_loss: Most recent SL value (or None)
+                - current_take_profit: Most recent TP value (or None)
+                - exit_trail_price: Trailing stop price (or None)
+                - exit_trail_offset: Trailing stop offset (or None)
+                - timestamp: Timestamp of the webhook with these values
+                
+        Requirements: 1.5
+        """
+        result = {
+            'current_stop_loss': None,
+            'current_take_profit': None,
+            'exit_trail_price': None,
+            'exit_trail_offset': None,
+            'timestamp': None
+        }
+        
+        # Get all webhooks in the group, ordered by timestamp descending
+        webhooks = WebhookLog.query.filter(
+            WebhookLog.trade_group_id == trade_group_id
+        ).order_by(WebhookLog.timestamp.desc()).all()
+        
+        if not webhooks:
+            return result
+        
+        # Find the most recent non-null SL value
+        for webhook in webhooks:
+            sl_value = webhook.current_stop_loss or webhook.stop_loss
+            if sl_value is not None and result['current_stop_loss'] is None:
+                result['current_stop_loss'] = sl_value
+                if result['timestamp'] is None:
+                    result['timestamp'] = webhook.timestamp
+                break
+        
+        # Find the most recent non-null TP value
+        for webhook in webhooks:
+            tp_value = webhook.current_take_profit or webhook.take_profit
+            if tp_value is not None and result['current_take_profit'] is None:
+                result['current_take_profit'] = tp_value
+                if result['timestamp'] is None:
+                    result['timestamp'] = webhook.timestamp
+                break
+        
+        # Find the most recent trailing stop info
+        for webhook in webhooks:
+            if webhook.exit_trail_price is not None and result['exit_trail_price'] is None:
+                result['exit_trail_price'] = webhook.exit_trail_price
+            if webhook.exit_trail_offset is not None and result['exit_trail_offset'] is None:
+                result['exit_trail_offset'] = webhook.exit_trail_offset
+            if result['exit_trail_price'] is not None and result['exit_trail_offset'] is not None:
+                break
+        
+        logger.debug(
+            f"Most recent SL/TP for {trade_group_id}: "
+            f"sl={result['current_stop_loss']}, tp={result['current_take_profit']}, "
+            f"trail_price={result['exit_trail_price']}, trail_offset={result['exit_trail_offset']}"
+        )
+        
+        return result
+
+
+@dataclass
+class TPHitStatus:
+    """TP hit status for a trade group.
+    
+    **Feature: trade-enhancements, Property 10: TP Hit Detection**
+    **Feature: trade-enhancements, Property 11: All TPs Complete Detection**
+    **Validates: Requirements 3.2, 3.5**
+    """
+    tp1_hit: bool = False
+    tp1_timestamp: Optional[datetime] = None
+    tp1_price: Optional[float] = None
+    tp1_pnl_percent: Optional[float] = None
+    
+    tp2_hit: bool = False
+    tp2_timestamp: Optional[datetime] = None
+    tp2_price: Optional[float] = None
+    tp2_pnl_percent: Optional[float] = None
+    
+    tp3_hit: bool = False
+    tp3_timestamp: Optional[datetime] = None
+    tp3_price: Optional[float] = None
+    tp3_pnl_percent: Optional[float] = None
+    
+    all_tps_complete: bool = False
+
+
+def get_tp_hit_status(trades: list) -> TPHitStatus:
+    """
+    Extract TP hit status from a list of trade webhooks.
+    
+    A TP level (TP1, TP2, TP3) is marked as "hit" if and only if there exists
+    a webhook in the group with tp_level equal to that TP level.
+    
+    **Feature: trade-enhancements, Property 10: TP Hit Detection**
+    **Validates: Requirements 3.2**
+    
+    Args:
+        trades: List of trade/webhook dictionaries or WebhookLog objects
+        
+    Returns:
+        TPHitStatus object with hit flags and details
+    """
+    result = TPHitStatus()
+    
+    if not trades:
+        return result
+    
+    for trade in trades:
+        # Handle both dict and WebhookLog objects
+        if hasattr(trade, 'tp_level'):
+            tp_level = trade.tp_level
+            timestamp = trade.timestamp
+            price = trade.price
+            pnl_percent = getattr(trade, 'realized_pnl_percent', None)
+        elif isinstance(trade, dict):
+            tp_level = trade.get('tp_level')
+            timestamp = trade.get('timestamp')
+            price = trade.get('price')
+            pnl_percent = trade.get('realized_pnl_percent')
+            
+            # Also check metadata for tp_level detection
+            if not tp_level:
+                metadata = trade.get('metadata', {})
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except (json.JSONDecodeError, TypeError):
+                        metadata = {}
+                
+                order_comment = metadata.get('order_comment', '').upper()
+                order_id = metadata.get('order_id', '').lower()
+                
+                if 'TP1' in order_comment or '1st target' in order_id:
+                    tp_level = 'TP1'
+                elif 'TP2' in order_comment or '2nd target' in order_id:
+                    tp_level = 'TP2'
+                elif 'TP3' in order_comment or '3rd target' in order_id:
+                    tp_level = 'TP3'
+        else:
+            continue
+        
+        # Mark TP as hit
+        if tp_level == 'TP1' and not result.tp1_hit:
+            result.tp1_hit = True
+            result.tp1_timestamp = timestamp
+            result.tp1_price = price
+            result.tp1_pnl_percent = pnl_percent
+        elif tp_level == 'TP2' and not result.tp2_hit:
+            result.tp2_hit = True
+            result.tp2_timestamp = timestamp
+            result.tp2_price = price
+            result.tp2_pnl_percent = pnl_percent
+        elif tp_level == 'TP3' and not result.tp3_hit:
+            result.tp3_hit = True
+            result.tp3_timestamp = timestamp
+            result.tp3_price = price
+            result.tp3_pnl_percent = pnl_percent
+    
+    # Check if all TPs are complete
+    # **Feature: trade-enhancements, Property 11: All TPs Complete Detection**
+    # **Validates: Requirements 3.5**
+    result.all_tps_complete = result.tp1_hit and result.tp2_hit and result.tp3_hit
+    
+    return result

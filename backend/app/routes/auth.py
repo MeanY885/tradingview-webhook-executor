@@ -182,3 +182,69 @@ def update_webhook_ip_whitelist():
         'enabled': user.webhook_ip_whitelist_enabled,
         'whitelist': user.get_webhook_ip_whitelist()
     })
+
+
+@bp.route('/change-password', methods=['POST'])
+@jwt_required()
+def change_password():
+    """
+    Change user password.
+    
+    Request body:
+    - current_password: Required for self-change
+    - new_password: New password (min 8 chars)
+    - user_id: Optional, for admin changing another user's password
+    
+    Returns:
+    - 200: Password changed successfully
+    - 400: Validation error (password too short)
+    - 401: Current password incorrect
+    - 403: Not authorized to change this user's password
+    """
+    current_user_id = int(get_jwt_identity())
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({'error': 'Request body required'}), 400
+    
+    new_password = data.get('new_password')
+    target_user_id = data.get('user_id')
+    current_password = data.get('current_password')
+    
+    # Validate new password is provided
+    if not new_password:
+        return jsonify({'error': 'New password required'}), 400
+    
+    # Validate minimum password length (8 characters)
+    if len(new_password) < 8:
+        return jsonify({'error': 'Password must be at least 8 characters'}), 400
+    
+    # Determine target user
+    if target_user_id and target_user_id != current_user_id:
+        # Changing another user's password - requires admin role
+        if current_user.role != 'admin':
+            return jsonify({'error': 'Not authorized to change this password'}), 403
+        
+        target_user = User.query.get(target_user_id)
+        if not target_user:
+            return jsonify({'error': 'Target user not found'}), 404
+    else:
+        # Changing own password - requires current password verification
+        target_user = current_user
+        
+        if not current_password:
+            return jsonify({'error': 'Current password required'}), 400
+        
+        if not current_user.check_password(current_password):
+            return jsonify({'error': 'Invalid credentials'}), 401
+    
+    # Set new password (uses bcrypt via werkzeug)
+    target_user.set_password(new_password)
+    db.session.commit()
+    
+    return jsonify({'message': 'Password changed successfully'}), 200

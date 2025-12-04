@@ -209,14 +209,17 @@ def _process_webhook(broker: str, webhook_identifier: str):
 
 
 def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, status='pending', error=None):
-    """Create webhook log entry with TP tracking fields.
+    """Create webhook log entry with TP tracking and SL/TP change detection.
     
     Uses WebhookNormalizer for consistent parsing and stores:
     - tp_level: TP1, TP2, TP3, SL, PARTIAL, etc.
     - position_size_after: Remaining position after this action
     - entry_price: Cached entry price for P&L calculations
+    - current_stop_loss, current_take_profit: Current SL/TP values
+    - exit_trail_price, exit_trail_offset: Trailing stop parameters
+    - sl_changed, tp_changed: Flags indicating SL/TP value changes
     
-    Requirements: 1.1, 1.2, 5.1, 5.2
+    Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 5.1, 5.2
     """
     import json
 
@@ -294,6 +297,33 @@ def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, sta
     
     # Get stop_loss from normalized webhook (may be in alert_message)
     stop_loss = normalized.stop_loss_price or params.get('stop_loss')
+    
+    # Extract exit strategy fields from normalized webhook
+    # Requirements: 1.1, 1.2, 2.1, 2.2
+    # current_stop_loss: Use stop_loss_price (which may come from exit_stop mapping)
+    current_stop_loss = normalized.stop_loss_price
+    # current_take_profit: Use take_profit_price (which may come from exit_limit mapping)
+    current_take_profit = normalized.take_profit_price
+    # Trailing stop fields
+    exit_trail_price = normalized.exit_trail_price
+    exit_trail_offset = normalized.exit_trail_offset
+    
+    # Detect SL/TP changes from previous webhook in the trade group
+    # Requirements: 1.3
+    sl_changed = False
+    tp_changed = False
+    
+    if trade_group_id and not result.is_new_group:
+        # Only detect changes for non-entry webhooks (exits/updates)
+        sl_changed, tp_changed = TradeGroupingService.detect_sltp_changes(
+            trade_group_id=trade_group_id,
+            current_sl=current_stop_loss,
+            current_tp=current_take_profit
+        )
+        if sl_changed:
+            logger.info(f"SL changed detected for trade group {trade_group_id}: new SL={current_stop_loss}")
+        if tp_changed:
+            logger.info(f"TP changed detected for trade group {trade_group_id}: new TP={current_take_profit}")
 
     log = WebhookLog(
         user_id=user_id,
@@ -319,6 +349,13 @@ def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, sta
         # P&L fields (calculated for exits)
         realized_pnl_percent=realized_pnl_percent,
         realized_pnl_absolute=realized_pnl_absolute,
+        # SL/TP change tracking fields (Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 5.1, 5.2)
+        current_stop_loss=current_stop_loss,
+        current_take_profit=current_take_profit,
+        exit_trail_price=exit_trail_price,
+        exit_trail_offset=exit_trail_offset,
+        sl_changed=sl_changed,
+        tp_changed=tp_changed,
         metadata_json=metadata_json,
         status=status,
         client_order_id=client_order_id,

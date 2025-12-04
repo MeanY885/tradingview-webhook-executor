@@ -33,7 +33,7 @@ class NormalizedWebhook:
     This dataclass provides a consistent structure for webhook data regardless
     of the source format variations from TradingView strategies.
     
-    Requirements: 1.1, 4.1, 4.2, 5.1, 5.2
+    Requirements: 1.1, 1.2, 2.2, 2.5, 4.1, 4.2, 5.1, 5.2
     """
     # Core identification
     symbol: str
@@ -45,6 +45,7 @@ class NormalizedWebhook:
     order_price: Optional[float] = None
     entry_price: Optional[float] = None  # For entries
     stop_loss_price: Optional[float] = None
+    take_profit_price: Optional[float] = None  # TP price from exit_limit or take_profit_price
     
     # Quantities (always float or None)
     order_contracts: Optional[float] = None
@@ -57,6 +58,19 @@ class NormalizedWebhook:
     # Trade parameters
     leverage: Optional[float] = None
     pyramiding: Optional[int] = None
+    
+    # Exit strategy fields (TradingView strategy format)
+    # Requirements: 1.1, 1.2, 2.2, 5.1, 5.2
+    exit_stop: Optional[float] = None  # TradingView exit_stop field
+    exit_limit: Optional[float] = None  # TradingView exit_limit field
+    exit_loss_ticks: Optional[float] = None  # Exit loss in ticks
+    exit_profit_ticks: Optional[float] = None  # Exit profit in ticks
+    exit_trail_price: Optional[float] = None  # Trailing stop price
+    exit_trail_offset: Optional[float] = None  # Trailing stop offset
+    
+    # Custom indicator values (plot_0, plot_1, etc.)
+    # Requirements: 2.5
+    plot_values: Dict[str, float] = field(default_factory=dict)
     
     # Metadata
     timestamp: Optional[datetime] = None
@@ -197,9 +211,10 @@ class WebhookNormalizer:
         alert_params = WebhookNormalizer.parse_alert_message(alert_message)
         
         # Extract symbol (try multiple field names)
+        # Requirements 2.3: ticker is alias for symbol, symbol takes precedence
         symbol = ''
-        for field in ['symbol', 'instrument', 'ticker']:
-            val = raw_payload.get(field)
+        for field_name in ['symbol', 'instrument', 'ticker']:
+            val = raw_payload.get(field_name)
             if val and isinstance(val, str) and not val.startswith('{{'):
                 symbol = val.upper()
                 break
@@ -262,6 +277,48 @@ class WebhookNormalizer:
                 alert_params.get('entry_price')
             )
         )
+        # Extract exit strategy fields first (Requirements 1.1, 1.2, 2.1, 2.2)
+        exit_stop = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('exit_stop'),
+                alert_params.get('exit_stop')
+            )
+        )
+        exit_limit = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('exit_limit'),
+                alert_params.get('exit_limit')
+            )
+        )
+        exit_loss_ticks = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('exit_loss_ticks'),
+                alert_params.get('exit_loss_ticks')
+            )
+        )
+        exit_profit_ticks = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('exit_profit_ticks'),
+                alert_params.get('exit_profit_ticks')
+            )
+        )
+        
+        # Extract trailing stop fields (Requirements 2.2, 5.1, 5.2)
+        exit_trail_price = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('exit_trail_price'),
+                alert_params.get('exit_trail_price')
+            )
+        )
+        exit_trail_offset = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('exit_trail_offset'),
+                alert_params.get('exit_trail_offset')
+            )
+        )
+        
+        # Extract stop_loss_price with exit_stop mapping (Requirements 2.1)
+        # exit_stop maps to stop_loss_price if stop_loss_price not explicitly set
         stop_loss_price = WebhookNormalizer._parse_float(
             WebhookNormalizer._get_first_valid(
                 alert_params.get('stop_loss_price'),
@@ -269,6 +326,38 @@ class WebhookNormalizer:
                 raw_payload.get('stop_loss')
             )
         )
+        # If no explicit stop_loss_price, use exit_stop
+        if stop_loss_price is None and exit_stop is not None:
+            stop_loss_price = exit_stop
+        
+        # Extract take_profit_price with exit_limit mapping (Requirements 2.1)
+        # exit_limit maps to take_profit_price if take_profit_price not explicitly set
+        take_profit_price = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                alert_params.get('take_profit_price'),
+                raw_payload.get('take_profit_price'),
+                raw_payload.get('take_profit')
+            )
+        )
+        # If no explicit take_profit_price, use exit_limit
+        if take_profit_price is None and exit_limit is not None:
+            take_profit_price = exit_limit
+        
+        # Extract plot values (Requirements 2.5)
+        # Extract fields matching pattern plot_N (where N is a digit)
+        plot_values = {}
+        for key, value in raw_payload.items():
+            if key.startswith('plot_') and len(key) > 5 and key[5:].isdigit():
+                parsed_value = WebhookNormalizer._parse_float(value)
+                if parsed_value is not None:
+                    plot_values[key] = parsed_value
+        # Also check alert_params for plot values
+        for key, value in alert_params.items():
+            if key.startswith('plot_') and len(key) > 5 and key[5:].isdigit():
+                if key not in plot_values:  # raw_payload takes precedence
+                    parsed_value = WebhookNormalizer._parse_float(value)
+                    if parsed_value is not None:
+                        plot_values[key] = parsed_value
         
         # Extract leverage
         leverage = WebhookNormalizer._parse_float(
@@ -312,12 +401,20 @@ class WebhookNormalizer:
             order_price=order_price,
             entry_price=entry_price,
             stop_loss_price=stop_loss_price,
+            take_profit_price=take_profit_price,
             order_contracts=order_contracts,
             position_size=position_size,
             market_position=market_position,
             is_position_closed=is_position_closed,
             leverage=leverage,
             pyramiding=pyramiding,
+            exit_stop=exit_stop,
+            exit_limit=exit_limit,
+            exit_loss_ticks=exit_loss_ticks,
+            exit_profit_ticks=exit_profit_ticks,
+            exit_trail_price=exit_trail_price,
+            exit_trail_offset=exit_trail_offset,
+            plot_values=plot_values,
             timestamp=timestamp,
             order_id=order_id,
             order_comment=order_comment,
@@ -326,12 +423,37 @@ class WebhookNormalizer:
     
     @staticmethod
     def _parse_float(value) -> Optional[float]:
-        """Safely parse a value to float."""
+        """Safely parse a value to float.
+        
+        Handles:
+        - None values → None
+        - Numeric values (int, float) → float
+        - String values → parsed float
+        - Empty strings → None
+        - Whitespace-only strings → None
+        - Invalid strings → None (logged as warning)
+        
+        Requirements: 2.6
+        """
         if value is None:
             return None
+        
+        # Handle string values
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            try:
+                return float(stripped)
+            except ValueError:
+                logger.warning(f"Could not parse float from string: '{value}'")
+                return None
+        
+        # Handle numeric values
         try:
             return float(value)
         except (ValueError, TypeError):
+            logger.warning(f"Could not parse float from value: {value} (type: {type(value).__name__})")
             return None
     
     @staticmethod

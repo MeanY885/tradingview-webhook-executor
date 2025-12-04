@@ -496,3 +496,388 @@ class TestOrderTypeDetection:
         
         normalized = WebhookNormalizer.normalize(payload)
         assert normalized.order_type == 'reduce_long'
+
+
+# =============================================================================
+# Property Tests for Trade Enhancements Feature
+# =============================================================================
+
+class TestExitStrategyFieldExtraction:
+    """Tests for exit strategy field extraction.
+    
+    **Feature: trade-enhancements, Property 1: Exit Strategy Field Extraction**
+    **Validates: Requirements 1.1, 1.2**
+    """
+    
+    @given(
+        exit_stop=st.one_of(
+            st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False),
+            st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False).map(str)
+        ),
+        exit_limit=st.one_of(
+            st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False),
+            st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False).map(str)
+        ),
+        exit_loss_ticks=st.one_of(
+            st.floats(min_value=0.001, max_value=1000, allow_nan=False, allow_infinity=False),
+            st.floats(min_value=0.001, max_value=1000, allow_nan=False, allow_infinity=False).map(str)
+        ),
+        exit_profit_ticks=st.one_of(
+            st.floats(min_value=0.001, max_value=1000, allow_nan=False, allow_infinity=False),
+            st.floats(min_value=0.001, max_value=1000, allow_nan=False, allow_infinity=False).map(str)
+        )
+    )
+    @settings(max_examples=100)
+    def test_property_1_exit_strategy_field_extraction(self, exit_stop, exit_limit, exit_loss_ticks, exit_profit_ticks):
+        """
+        **Feature: trade-enhancements, Property 1: Exit Strategy Field Extraction**
+        **Validates: Requirements 1.1, 1.2**
+        
+        For any webhook payload containing exit_stop, exit_limit, exit_loss_ticks, 
+        or exit_profit_ticks fields (as strings or numbers), the normalizer shall 
+        correctly parse and store these values as floats.
+        """
+        payload = {
+            'ticker': 'BTCUSDT',
+            'order_action': 'buy',
+            'exit_stop': exit_stop,
+            'exit_limit': exit_limit,
+            'exit_loss_ticks': exit_loss_ticks,
+            'exit_profit_ticks': exit_profit_ticks
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # All exit strategy fields should be parsed as floats
+        assert normalized.exit_stop == pytest.approx(float(exit_stop), rel=1e-4)
+        assert normalized.exit_limit == pytest.approx(float(exit_limit), rel=1e-4)
+        assert normalized.exit_loss_ticks == pytest.approx(float(exit_loss_ticks), rel=1e-4)
+        assert normalized.exit_profit_ticks == pytest.approx(float(exit_profit_ticks), rel=1e-4)
+
+
+class TestFieldMappingConsistency:
+    """Tests for field mapping consistency.
+    
+    **Feature: trade-enhancements, Property 2: Field Mapping Consistency**
+    **Validates: Requirements 2.1**
+    """
+    
+    @given(
+        exit_stop=st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False),
+        exit_limit=st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100)
+    def test_property_2_field_mapping_consistency(self, exit_stop, exit_limit):
+        """
+        **Feature: trade-enhancements, Property 2: Field Mapping Consistency**
+        **Validates: Requirements 2.1**
+        
+        For any webhook payload containing exit_stop or exit_limit, the normalizer 
+        shall map exit_stop to stop_loss_price and exit_limit to take_profit_price 
+        in the normalized output.
+        """
+        payload = {
+            'ticker': 'BTCUSDT',
+            'order_action': 'buy',
+            'exit_stop': exit_stop,
+            'exit_limit': exit_limit
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # exit_stop should map to stop_loss_price
+        assert normalized.stop_loss_price == pytest.approx(exit_stop, rel=1e-4)
+        # exit_limit should map to take_profit_price
+        assert normalized.take_profit_price == pytest.approx(exit_limit, rel=1e-4)
+        
+        # Original values should also be preserved
+        assert normalized.exit_stop == pytest.approx(exit_stop, rel=1e-4)
+        assert normalized.exit_limit == pytest.approx(exit_limit, rel=1e-4)
+
+
+class TestTrailingStopExtraction:
+    """Tests for trailing stop extraction.
+    
+    **Feature: trade-enhancements, Property 3: Trailing Stop Extraction**
+    **Validates: Requirements 2.2, 5.1, 5.2**
+    """
+    
+    @given(
+        exit_trail_price=st.one_of(
+            st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False),
+            st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False).map(str)
+        ),
+        exit_trail_offset=st.one_of(
+            st.floats(min_value=0.001, max_value=1000, allow_nan=False, allow_infinity=False),
+            st.floats(min_value=0.001, max_value=1000, allow_nan=False, allow_infinity=False).map(str)
+        )
+    )
+    @settings(max_examples=100)
+    def test_property_3_trailing_stop_extraction(self, exit_trail_price, exit_trail_offset):
+        """
+        **Feature: trade-enhancements, Property 3: Trailing Stop Extraction**
+        **Validates: Requirements 2.2, 5.1, 5.2**
+        
+        For any webhook payload containing exit_trail_price and/or exit_trail_offset 
+        fields, the normalizer shall correctly extract and store these values.
+        """
+        payload = {
+            'ticker': 'BTCUSDT',
+            'order_action': 'buy',
+            'exit_trail_price': exit_trail_price,
+            'exit_trail_offset': exit_trail_offset
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # Trailing stop fields should be correctly extracted
+        assert normalized.exit_trail_price == pytest.approx(float(exit_trail_price), rel=1e-4)
+        assert normalized.exit_trail_offset == pytest.approx(float(exit_trail_offset), rel=1e-4)
+
+
+class TestSymbolFieldAliasing:
+    """Tests for symbol field aliasing.
+    
+    **Feature: trade-enhancements, Property 4: Symbol Field Aliasing**
+    **Validates: Requirements 2.3**
+    """
+    
+    @given(
+        ticker=st.sampled_from(['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'CVXUSDT'])
+    )
+    @settings(max_examples=100)
+    def test_property_4_symbol_field_aliasing_ticker_only(self, ticker):
+        """
+        **Feature: trade-enhancements, Property 4: Symbol Field Aliasing**
+        **Validates: Requirements 2.3**
+        
+        For any webhook payload, if ticker is present and symbol is absent, 
+        the normalizer shall use ticker as the symbol value.
+        """
+        payload = {
+            'ticker': ticker,
+            'order_action': 'buy'
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # ticker should be used as symbol
+        assert normalized.symbol == ticker.upper()
+    
+    @given(
+        symbol=st.sampled_from(['BTCUSDT', 'ETHUSDT', 'SOLUSDT']),
+        ticker=st.sampled_from(['XRPUSDT', 'CVXUSDT', 'DOGEUSDT'])
+    )
+    @settings(max_examples=100)
+    def test_property_4_symbol_takes_precedence(self, symbol, ticker):
+        """
+        **Feature: trade-enhancements, Property 4: Symbol Field Aliasing**
+        **Validates: Requirements 2.3**
+        
+        For any webhook payload, if both symbol and ticker are present, 
+        symbol takes precedence.
+        """
+        payload = {
+            'symbol': symbol,
+            'ticker': ticker,
+            'order_action': 'buy'
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # symbol should take precedence over ticker
+        assert normalized.symbol == symbol.upper()
+
+
+class TestEntryPriceFromPositionAverage:
+    """Tests for entry price from position average.
+    
+    **Feature: trade-enhancements, Property 5: Entry Price from Position Average**
+    **Validates: Requirements 2.4**
+    """
+    
+    @given(
+        position_avg_price=st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100)
+    def test_property_5_entry_price_from_position_average(self, position_avg_price):
+        """
+        **Feature: trade-enhancements, Property 5: Entry Price from Position Average**
+        **Validates: Requirements 2.4**
+        
+        For any webhook payload containing position_avg_price, the normalizer 
+        shall use this value as entry_price when no explicit entry_price field is present.
+        """
+        payload = {
+            'ticker': 'BTCUSDT',
+            'order_action': 'buy',
+            'position_avg_price': position_avg_price
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # position_avg_price should be used as entry_price
+        assert normalized.entry_price == pytest.approx(position_avg_price, rel=1e-4)
+    
+    @given(
+        entry_price=st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False),
+        position_avg_price=st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100)
+    def test_property_5_explicit_entry_price_takes_precedence(self, entry_price, position_avg_price):
+        """
+        **Feature: trade-enhancements, Property 5: Entry Price from Position Average**
+        **Validates: Requirements 2.4**
+        
+        For any webhook payload with both entry_price and position_avg_price,
+        the explicit entry_price takes precedence.
+        """
+        # Ensure they're different to make the test meaningful
+        assume(abs(entry_price - position_avg_price) > 0.01)
+        
+        payload = {
+            'ticker': 'BTCUSDT',
+            'order_action': 'buy',
+            'entry_price': entry_price,
+            'position_avg_price': position_avg_price
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # explicit entry_price should take precedence
+        assert normalized.entry_price == pytest.approx(entry_price, rel=1e-4)
+
+
+class TestPlotValuesExtraction:
+    """Tests for plot values extraction.
+    
+    **Feature: trade-enhancements, Property 6: Plot Values Extraction**
+    **Validates: Requirements 2.5**
+    """
+    
+    @given(
+        plot_0=st.floats(min_value=-100000, max_value=100000, allow_nan=False, allow_infinity=False),
+        plot_1=st.floats(min_value=-100000, max_value=100000, allow_nan=False, allow_infinity=False),
+        plot_2=st.floats(min_value=-100000, max_value=100000, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100)
+    def test_property_6_plot_values_extraction(self, plot_0, plot_1, plot_2):
+        """
+        **Feature: trade-enhancements, Property 6: Plot Values Extraction**
+        **Validates: Requirements 2.5**
+        
+        For any webhook payload containing fields matching pattern plot_N 
+        (where N is a digit), the normalizer shall extract all such fields 
+        into the plot_values dictionary.
+        """
+        payload = {
+            'ticker': 'BTCUSDT',
+            'order_action': 'buy',
+            'plot_0': plot_0,
+            'plot_1': plot_1,
+            'plot_2': plot_2
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # All plot values should be extracted
+        assert 'plot_0' in normalized.plot_values
+        assert 'plot_1' in normalized.plot_values
+        assert 'plot_2' in normalized.plot_values
+        assert normalized.plot_values['plot_0'] == pytest.approx(plot_0, rel=1e-4)
+        assert normalized.plot_values['plot_1'] == pytest.approx(plot_1, rel=1e-4)
+        assert normalized.plot_values['plot_2'] == pytest.approx(plot_2, rel=1e-4)
+    
+    @given(
+        plot_0=st.floats(min_value=-100000, max_value=100000, allow_nan=False, allow_infinity=False).map(str)
+    )
+    @settings(max_examples=100)
+    def test_property_6_plot_values_string_parsing(self, plot_0):
+        """
+        **Feature: trade-enhancements, Property 6: Plot Values Extraction**
+        **Validates: Requirements 2.5**
+        
+        Plot values provided as strings should be correctly parsed to floats.
+        """
+        payload = {
+            'ticker': 'BTCUSDT',
+            'order_action': 'buy',
+            'plot_0': plot_0
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert 'plot_0' in normalized.plot_values
+        assert normalized.plot_values['plot_0'] == pytest.approx(float(plot_0), rel=1e-4)
+
+
+class TestTypeCoercion:
+    """Tests for type coercion of prices and quantities.
+    
+    **Feature: trade-enhancements, Property 7: Type Coercion for Prices and Quantities**
+    **Validates: Requirements 2.6**
+    """
+    
+    @given(
+        price=st.floats(min_value=0.001, max_value=100000, allow_nan=False, allow_infinity=False),
+        as_string=st.booleans()
+    )
+    @settings(max_examples=100)
+    def test_property_7_type_coercion_prices(self, price, as_string):
+        """
+        **Feature: trade-enhancements, Property 7: Type Coercion for Prices and Quantities**
+        **Validates: Requirements 2.6**
+        
+        For any webhook payload where price fields are provided as strings,
+        the normalizer shall correctly parse them to float values. For any 
+        payload where they are provided as numbers, they shall be preserved as floats.
+        """
+        price_value = str(price) if as_string else price
+        
+        payload = {
+            'ticker': 'BTCUSDT',
+            'order_action': 'buy',
+            'order_price': price_value,
+            'exit_stop': price_value,
+            'exit_limit': price_value
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # All prices should be floats regardless of input type
+        assert isinstance(normalized.order_price, float)
+        assert isinstance(normalized.exit_stop, float)
+        assert isinstance(normalized.exit_limit, float)
+        assert normalized.order_price == pytest.approx(price, rel=1e-4)
+        assert normalized.exit_stop == pytest.approx(price, rel=1e-4)
+        assert normalized.exit_limit == pytest.approx(price, rel=1e-4)
+    
+    @given(
+        quantity=st.floats(min_value=0.001, max_value=10000, allow_nan=False, allow_infinity=False),
+        as_string=st.booleans()
+    )
+    @settings(max_examples=100)
+    def test_property_7_type_coercion_quantities(self, quantity, as_string):
+        """
+        **Feature: trade-enhancements, Property 7: Type Coercion for Prices and Quantities**
+        **Validates: Requirements 2.6**
+        
+        For any webhook payload where quantity fields are provided as strings,
+        the normalizer shall correctly parse them to float values.
+        """
+        quantity_value = str(quantity) if as_string else quantity
+        
+        payload = {
+            'ticker': 'BTCUSDT',
+            'order_action': 'buy',
+            'order_contracts': quantity_value,
+            'position_size': quantity_value
+        }
+        
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # All quantities should be floats regardless of input type
+        assert isinstance(normalized.order_contracts, float)
+        assert isinstance(normalized.position_size, float)
+        assert normalized.order_contracts == pytest.approx(quantity, rel=1e-4)
+        assert normalized.position_size == pytest.approx(quantity, rel=1e-4)

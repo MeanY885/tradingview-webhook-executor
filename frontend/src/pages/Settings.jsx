@@ -6,6 +6,7 @@ import {
 import api from '../services/api'
 import AlertTemplateGenerator from '../components/Settings/AlertTemplateGenerator'
 import IPWhitelistManager from '../components/Settings/IPWhitelistManager'
+import PasswordChange from '../components/Settings/PasswordChange'
 
 const Settings = () => {
   const [tab, setTab] = useState(0)
@@ -107,6 +108,9 @@ const Settings = () => {
 
       {/* IP Whitelist Manager */}
       <IPWhitelistManager />
+
+      {/* Password Change */}
+      <PasswordChange />
 
       <Paper sx={{ p: 3 }}>
         <Typography variant="h6" gutterBottom>

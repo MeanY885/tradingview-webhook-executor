@@ -43,6 +43,14 @@ class WebhookLog(db.Model):
     realized_pnl_percent = db.Column(db.Float)  # P&L percentage for this specific exit
     realized_pnl_absolute = db.Column(db.Float)  # P&L absolute value for this specific exit
 
+    # SL/TP change tracking fields
+    current_stop_loss = db.Column(db.Float)  # Current SL value at this webhook
+    current_take_profit = db.Column(db.Float)  # Current TP value at this webhook
+    exit_trail_price = db.Column(db.Float)  # Trailing stop price
+    exit_trail_offset = db.Column(db.Float)  # Trailing stop offset
+    sl_changed = db.Column(db.Boolean, default=False)  # Flag if SL changed from previous
+    tp_changed = db.Column(db.Boolean, default=False)  # Flag if TP changed from previous
+
     # Execution status
     status = db.Column(db.String(20), nullable=False)  # 'success', 'failed', 'invalid', 'test_success'
     broker_order_id = db.Column(db.String(50))
@@ -86,6 +94,12 @@ class WebhookLog(db.Model):
             'entry_price': self.entry_price,
             'realized_pnl_percent': self.realized_pnl_percent,
             'realized_pnl_absolute': self.realized_pnl_absolute,
+            'current_stop_loss': self.current_stop_loss,
+            'current_take_profit': self.current_take_profit,
+            'exit_trail_price': self.exit_trail_price,
+            'exit_trail_offset': self.exit_trail_offset,
+            'sl_changed': self.sl_changed,
+            'tp_changed': self.tp_changed,
             'metadata': metadata,
             'status': self.status,
             'broker_order_id': self.broker_order_id,

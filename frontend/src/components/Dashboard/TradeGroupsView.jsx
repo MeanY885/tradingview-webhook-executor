@@ -20,6 +20,8 @@ import {
 } from '@mui/icons-material'
 import { format, formatDistanceStrict } from 'date-fns'
 import api from '../../services/api'
+import TPCheckboxes from './TPCheckboxes'
+import SLTPChangeIndicator from './SLTPChangeIndicator'
 
 const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
   const [expandedGroups, setExpandedGroups] = useState({})
@@ -179,18 +181,6 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
     return 'ACTIVE'
   }
 
-  // Get TP levels hit in the trade
-  const getTPLevelsHit = (trades) => {
-    const tpLevels = []
-    trades.forEach(t => {
-      const actionType = determineActionType(t)
-      if (['TP1', 'TP2', 'TP3'].includes(actionType) && !tpLevels.includes(actionType)) {
-        tpLevels.push(actionType)
-      }
-    })
-    return tpLevels.sort()
-  }
-
   // Determine exit type for closed trades
   const getExitType = (trades) => {
     const sortedTrades = [...trades].sort((a, b) =>
@@ -228,6 +218,31 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
     const remaining = trade.position_size_after ?? entryQuantity
     const reduced = entryQuantity - remaining
     return Math.min(100, Math.max(0, (reduced / entryQuantity) * 100))
+  }
+
+  // Get SL/TP values from a trade - Task 10.2
+  const getSLTPValues = (trade) => {
+    return {
+      currentSL: trade.current_stop_loss ?? trade.stop_loss ?? 
+                 trade.metadata?.alert_message_params?.stop_loss_price ?? null,
+      currentTP: trade.current_take_profit ?? trade.take_profit ?? 
+                 trade.metadata?.alert_message_params?.take_profit_price ?? null,
+      trailPrice: trade.exit_trail_price ?? null,
+      trailOffset: trade.exit_trail_offset ?? null,
+      slChanged: trade.sl_changed ?? false,
+      tpChanged: trade.tp_changed ?? false
+    }
+  }
+
+  // Get previous trade's SL/TP values for change comparison - Task 10.2
+  const getPreviousSLTP = (sortedTrades, currentIndex) => {
+    if (currentIndex <= 0) return { previousSL: null, previousTP: null }
+    const prevTrade = sortedTrades[currentIndex - 1]
+    const prevValues = getSLTPValues(prevTrade)
+    return {
+      previousSL: prevValues.currentSL,
+      previousTP: prevValues.currentTP
+    }
   }
 
   const handleDeleteGroup = async (e, groupId, trades) => {
@@ -277,7 +292,6 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
         const status = getTradeStatus(trades)
         const pnl = calculateGroupPnL(trades, direction)
         const entryMeta = getEntryMetadata(trades)
-        const tpLevelsHit = getTPLevelsHit(trades)
         const exitType = getExitType(trades)
         const duration = getTradeDuration(trades)
 
@@ -285,7 +299,6 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
         const sortedTrades = [...trades].sort((a, b) =>
           new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
         )
-        const entryTrade = sortedTrades[0]
         const latestTrade = sortedTrades[sortedTrades.length - 1]
 
         return (
@@ -405,6 +418,9 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                     />
                   )}
 
+                  {/* TP Checkboxes - Task 9.1 */}
+                  <TPCheckboxes trades={trades} compact={true} showCompleteIndicator={true} />
+
                   {/* Status */}
                   <Chip
                     label={status}
@@ -491,29 +507,17 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                         </Box>
                       )}
 
-                      {/* TP Levels Hit */}
-                      {tpLevelsHit.length > 0 && (
-                        <Box>
-                          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                            TP Levels Hit
-                          </Typography>
-                          <Box sx={{ display: 'flex', gap: 0.5 }}>
-                            {tpLevelsHit.map(tp => (
-                              <Chip
-                                key={tp}
-                                label={tp}
-                                size="small"
-                                sx={{ 
-                                  bgcolor: 'rgba(255,255,255,0.2)', 
-                                  color: 'white',
-                                  fontWeight: 'bold',
-                                  fontSize: '0.7rem'
-                                }}
-                              />
-                            ))}
-                          </Box>
-                        </Box>
-                      )}
+                      {/* TP Levels Hit - Task 9.2: Enhanced with TPCheckboxes */}
+                      <Box>
+                        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                          TP Levels
+                        </Typography>
+                        <TPCheckboxes 
+                          trades={trades} 
+                          compact={false} 
+                          showCompleteIndicator={true} 
+                        />
+                      </Box>
 
                       {/* Exit Type */}
                       <Box>
@@ -541,6 +545,12 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                     const isEntry = actionType === 'Entry'
                     const positionProgress = getPositionProgress(trade, entryMeta.entryQuantity)
                     const hasIndividualPnL = trade.realized_pnl_percent !== null && trade.realized_pnl_percent !== undefined
+                    
+                    // Get SL/TP values for this trade and previous trade - Task 10.2
+                    const sltpValues = getSLTPValues(trade)
+                    const { previousSL, previousTP } = getPreviousSLTP(sortedTrades, index)
+                    const hasSLTP = sltpValues.currentSL !== null || sltpValues.currentTP !== null || 
+                                    sltpValues.trailPrice !== null || sltpValues.trailOffset !== null
 
                     return (
                       <ListItem
@@ -637,6 +647,22 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                                 />
                               )}
                             </Box>
+
+                            {/* SL/TP Change Indicator - Task 10.2 */}
+                            {hasSLTP && (
+                              <Box sx={{ mt: 0.5, mb: 0.5 }}>
+                                <SLTPChangeIndicator
+                                  currentSL={sltpValues.currentSL}
+                                  previousSL={previousSL}
+                                  currentTP={sltpValues.currentTP}
+                                  previousTP={previousTP}
+                                  trailPrice={sltpValues.trailPrice}
+                                  trailOffset={sltpValues.trailOffset}
+                                  compact={true}
+                                  showLabels={true}
+                                />
+                              </Box>
+                            )}
 
                             {/* Position Size After - Task 7.2 */}
                             {!isEntry && trade.position_size_after !== null && trade.position_size_after !== undefined && (

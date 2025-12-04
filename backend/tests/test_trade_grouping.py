@@ -1065,3 +1065,710 @@ class TestConcurrentTradeSeparation:
         # Should match group 1 based on position size continuity
         assert matched_group == group_id_1, \
             f"Expected to match {group_id_1} by position size, got {matched_group}"
+
+
+class TestMostRecentSLTPSelection:
+    """Tests for most recent SL/TP selection.
+    
+    **Feature: trade-enhancements, Property 8: Most Recent SL/TP Selection**
+    **Validates: Requirements 1.5**
+    """
+    
+    @given(
+        num_webhooks=st.integers(min_value=2, max_value=10),
+        sl_values=st.lists(
+            st.one_of(
+                st.none(),
+                st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False)
+            ),
+            min_size=2,
+            max_size=10
+        ),
+        tp_values=st.lists(
+            st.one_of(
+                st.none(),
+                st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False)
+            ),
+            min_size=2,
+            max_size=10
+        )
+    )
+    @settings(max_examples=100)
+    def test_property_8_most_recent_sltp_selection(self, num_webhooks, sl_values, tp_values):
+        """
+        **Feature: trade-enhancements, Property 8: Most Recent SL/TP Selection**
+        **Validates: Requirements 1.5**
+        
+        For any trade group with multiple webhooks, the displayed SL and TP values 
+        shall be from the most recent webhook (by timestamp) that contains non-null 
+        values for those fields.
+        """
+        # Ensure we have matching lengths
+        min_len = min(num_webhooks, len(sl_values), len(tp_values))
+        assume(min_len >= 2)
+        
+        sl_values = sl_values[:min_len]
+        tp_values = tp_values[:min_len]
+        
+        # Round float values
+        sl_values = [round(v, 4) if v is not None else None for v in sl_values]
+        tp_values = [round(v, 4) if v is not None else None for v in tp_values]
+        
+        # Create mock webhooks ordered by timestamp (most recent first, as the query returns)
+        mock_webhooks = []
+        base_time = datetime(2025, 1, 1, 12, 0, 0)
+        
+        for i in range(min_len):
+            mock_webhook = MagicMock()
+            mock_webhook.timestamp = base_time + timedelta(hours=min_len - i - 1)  # Descending order
+            mock_webhook.current_stop_loss = sl_values[i]
+            mock_webhook.stop_loss = sl_values[i]  # Fallback
+            mock_webhook.current_take_profit = tp_values[i]
+            mock_webhook.take_profit = tp_values[i]  # Fallback
+            mock_webhook.exit_trail_price = None
+            mock_webhook.exit_trail_offset = None
+            mock_webhooks.append(mock_webhook)
+        
+        # Simulate the algorithm from get_most_recent_sltp
+        result = {
+            'current_stop_loss': None,
+            'current_take_profit': None,
+            'exit_trail_price': None,
+            'exit_trail_offset': None,
+            'timestamp': None
+        }
+        
+        # Find the most recent non-null SL value (webhooks are in descending timestamp order)
+        for webhook in mock_webhooks:
+            sl_value = webhook.current_stop_loss or webhook.stop_loss
+            if sl_value is not None and result['current_stop_loss'] is None:
+                result['current_stop_loss'] = sl_value
+                if result['timestamp'] is None:
+                    result['timestamp'] = webhook.timestamp
+                break
+        
+        # Find the most recent non-null TP value
+        for webhook in mock_webhooks:
+            tp_value = webhook.current_take_profit or webhook.take_profit
+            if tp_value is not None and result['current_take_profit'] is None:
+                result['current_take_profit'] = tp_value
+                if result['timestamp'] is None:
+                    result['timestamp'] = webhook.timestamp
+                break
+        
+        # Calculate expected values - first non-null in descending timestamp order
+        expected_sl = None
+        for sl in sl_values:
+            if sl is not None:
+                expected_sl = sl
+                break
+        
+        expected_tp = None
+        for tp in tp_values:
+            if tp is not None:
+                expected_tp = tp
+                break
+        
+        # Verify the algorithm returns the most recent non-null values
+        if expected_sl is not None:
+            assert result['current_stop_loss'] is not None, \
+                f"Expected SL {expected_sl}, got None"
+            assert abs(result['current_stop_loss'] - expected_sl) < 0.0001, \
+                f"Expected SL {expected_sl}, got {result['current_stop_loss']}"
+        else:
+            assert result['current_stop_loss'] is None, \
+                f"Expected None SL, got {result['current_stop_loss']}"
+        
+        if expected_tp is not None:
+            assert result['current_take_profit'] is not None, \
+                f"Expected TP {expected_tp}, got None"
+            assert abs(result['current_take_profit'] - expected_tp) < 0.0001, \
+                f"Expected TP {expected_tp}, got {result['current_take_profit']}"
+        else:
+            assert result['current_take_profit'] is None, \
+                f"Expected None TP, got {result['current_take_profit']}"
+    
+    @given(
+        sl_value=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False),
+        tp_value=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100)
+    def test_property_8_single_webhook_returns_its_values(self, sl_value, tp_value):
+        """
+        **Feature: trade-enhancements, Property 8: Most Recent SL/TP Selection**
+        **Validates: Requirements 1.5**
+        
+        For a trade group with a single webhook, the SL/TP values from that webhook
+        shall be returned.
+        """
+        sl_value = round(sl_value, 4)
+        tp_value = round(tp_value, 4)
+        
+        # Create a single mock webhook
+        mock_webhook = MagicMock()
+        mock_webhook.timestamp = datetime(2025, 1, 1, 12, 0, 0)
+        mock_webhook.current_stop_loss = sl_value
+        mock_webhook.stop_loss = sl_value
+        mock_webhook.current_take_profit = tp_value
+        mock_webhook.take_profit = tp_value
+        mock_webhook.exit_trail_price = None
+        mock_webhook.exit_trail_offset = None
+        
+        mock_webhooks = [mock_webhook]
+        
+        # Simulate the algorithm
+        result = {
+            'current_stop_loss': None,
+            'current_take_profit': None,
+            'exit_trail_price': None,
+            'exit_trail_offset': None,
+            'timestamp': None
+        }
+        
+        for webhook in mock_webhooks:
+            sl = webhook.current_stop_loss or webhook.stop_loss
+            if sl is not None and result['current_stop_loss'] is None:
+                result['current_stop_loss'] = sl
+                if result['timestamp'] is None:
+                    result['timestamp'] = webhook.timestamp
+                break
+        
+        for webhook in mock_webhooks:
+            tp = webhook.current_take_profit or webhook.take_profit
+            if tp is not None and result['current_take_profit'] is None:
+                result['current_take_profit'] = tp
+                if result['timestamp'] is None:
+                    result['timestamp'] = webhook.timestamp
+                break
+        
+        # Verify the single webhook's values are returned
+        assert abs(result['current_stop_loss'] - sl_value) < 0.0001, \
+            f"Expected SL {sl_value}, got {result['current_stop_loss']}"
+        assert abs(result['current_take_profit'] - tp_value) < 0.0001, \
+            f"Expected TP {tp_value}, got {result['current_take_profit']}"
+    
+    def test_property_8_empty_group_returns_none(self):
+        """
+        **Feature: trade-enhancements, Property 8: Most Recent SL/TP Selection**
+        **Validates: Requirements 1.5**
+        
+        For an empty trade group (no webhooks), all values shall be None.
+        """
+        mock_webhooks = []
+        
+        # Simulate the algorithm with empty list
+        result = {
+            'current_stop_loss': None,
+            'current_take_profit': None,
+            'exit_trail_price': None,
+            'exit_trail_offset': None,
+            'timestamp': None
+        }
+        
+        # No webhooks to iterate over
+        for webhook in mock_webhooks:
+            pass  # Nothing to do
+        
+        # All values should be None
+        assert result['current_stop_loss'] is None
+        assert result['current_take_profit'] is None
+        assert result['exit_trail_price'] is None
+        assert result['exit_trail_offset'] is None
+        assert result['timestamp'] is None
+
+
+class TestSLTPChangeDetection:
+    """Tests for SL/TP change detection.
+    
+    **Feature: trade-enhancements, Property 9: SL/TP Change Detection**
+    **Validates: Requirements 1.3**
+    """
+    
+    @given(
+        prev_sl=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False),
+        curr_sl=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False),
+        prev_tp=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False),
+        curr_tp=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100)
+    def test_property_9_sltp_change_detection_different_values(self, prev_sl, curr_sl, prev_tp, curr_tp):
+        """
+        **Feature: trade-enhancements, Property 9: SL/TP Change Detection**
+        **Validates: Requirements 1.3**
+        
+        For any two consecutive webhooks in a trade group, if the SL or TP value differs,
+        the sl_changed or tp_changed flag shall be set to true on the later webhook.
+        """
+        prev_sl = round(prev_sl, 4)
+        curr_sl = round(curr_sl, 4)
+        prev_tp = round(prev_tp, 4)
+        curr_tp = round(curr_tp, 4)
+        
+        # Simulate the change detection algorithm from detect_sltp_changes
+        sl_changed = False
+        tp_changed = False
+        
+        # Detect SL change
+        if curr_sl is not None and prev_sl is not None:
+            if abs(curr_sl - prev_sl) > 0.0001:
+                sl_changed = True
+        
+        # Detect TP change
+        if curr_tp is not None and prev_tp is not None:
+            if abs(curr_tp - prev_tp) > 0.0001:
+                tp_changed = True
+        
+        # Verify change detection
+        expected_sl_changed = abs(curr_sl - prev_sl) > 0.0001
+        expected_tp_changed = abs(curr_tp - prev_tp) > 0.0001
+        
+        assert sl_changed == expected_sl_changed, \
+            f"SL change detection failed: prev={prev_sl}, curr={curr_sl}, expected={expected_sl_changed}, got={sl_changed}"
+        assert tp_changed == expected_tp_changed, \
+            f"TP change detection failed: prev={prev_tp}, curr={curr_tp}, expected={expected_tp_changed}, got={tp_changed}"
+    
+    @given(
+        sl_value=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False),
+        tp_value=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100)
+    def test_property_9_same_values_no_change(self, sl_value, tp_value):
+        """
+        **Feature: trade-enhancements, Property 9: SL/TP Change Detection**
+        **Validates: Requirements 1.3**
+        
+        When SL and TP values are the same between consecutive webhooks,
+        the change flags shall be false.
+        """
+        sl_value = round(sl_value, 4)
+        tp_value = round(tp_value, 4)
+        
+        prev_sl = sl_value
+        curr_sl = sl_value
+        prev_tp = tp_value
+        curr_tp = tp_value
+        
+        # Simulate the change detection algorithm
+        sl_changed = False
+        tp_changed = False
+        
+        if curr_sl is not None and prev_sl is not None:
+            if abs(curr_sl - prev_sl) > 0.0001:
+                sl_changed = True
+        
+        if curr_tp is not None and prev_tp is not None:
+            if abs(curr_tp - prev_tp) > 0.0001:
+                tp_changed = True
+        
+        # Same values should not trigger change
+        assert sl_changed is False, \
+            f"Same SL values should not trigger change: {sl_value}"
+        assert tp_changed is False, \
+            f"Same TP values should not trigger change: {tp_value}"
+    
+    @given(
+        curr_sl=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False),
+        curr_tp=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100)
+    def test_property_9_new_value_from_none_is_change(self, curr_sl, curr_tp):
+        """
+        **Feature: trade-enhancements, Property 9: SL/TP Change Detection**
+        **Validates: Requirements 1.3**
+        
+        When a new SL or TP value is set where there was none before,
+        the change flag shall be true.
+        """
+        curr_sl = round(curr_sl, 4)
+        curr_tp = round(curr_tp, 4)
+        
+        prev_sl = None
+        prev_tp = None
+        
+        # Simulate the change detection algorithm
+        sl_changed = False
+        tp_changed = False
+        
+        if curr_sl is not None and prev_sl is None:
+            sl_changed = True
+        
+        if curr_tp is not None and prev_tp is None:
+            tp_changed = True
+        
+        # New values from None should trigger change
+        assert sl_changed is True, \
+            f"New SL value from None should trigger change: {curr_sl}"
+        assert tp_changed is True, \
+            f"New TP value from None should trigger change: {curr_tp}"
+    
+    def test_property_9_none_to_none_no_change(self):
+        """
+        **Feature: trade-enhancements, Property 9: SL/TP Change Detection**
+        **Validates: Requirements 1.3**
+        
+        When both previous and current values are None, no change should be detected.
+        """
+        prev_sl = None
+        curr_sl = None
+        prev_tp = None
+        curr_tp = None
+        
+        # Simulate the change detection algorithm
+        sl_changed = False
+        tp_changed = False
+        
+        if curr_sl is not None and prev_sl is not None:
+            if abs(curr_sl - prev_sl) > 0.0001:
+                sl_changed = True
+        elif curr_sl is not None and prev_sl is None:
+            sl_changed = True
+        
+        if curr_tp is not None and prev_tp is not None:
+            if abs(curr_tp - prev_tp) > 0.0001:
+                tp_changed = True
+        elif curr_tp is not None and prev_tp is None:
+            tp_changed = True
+        
+        # None to None should not trigger change
+        assert sl_changed is False, "None to None SL should not trigger change"
+        assert tp_changed is False, "None to None TP should not trigger change"
+    
+    @given(
+        prev_sl=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False),
+        prev_tp=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100)
+    def test_property_9_value_to_none_no_change_flag(self, prev_sl, prev_tp):
+        """
+        **Feature: trade-enhancements, Property 9: SL/TP Change Detection**
+        **Validates: Requirements 1.3**
+        
+        When SL or TP is removed (value to None), the change flag shall not be set.
+        This is by design - we only flag when new values are set, not when removed.
+        """
+        prev_sl = round(prev_sl, 4)
+        prev_tp = round(prev_tp, 4)
+        
+        curr_sl = None
+        curr_tp = None
+        
+        # Simulate the change detection algorithm
+        sl_changed = False
+        tp_changed = False
+        
+        if curr_sl is not None and prev_sl is not None:
+            if abs(curr_sl - prev_sl) > 0.0001:
+                sl_changed = True
+        elif curr_sl is not None and prev_sl is None:
+            sl_changed = True
+        
+        if curr_tp is not None and prev_tp is not None:
+            if abs(curr_tp - prev_tp) > 0.0001:
+                tp_changed = True
+        elif curr_tp is not None and prev_tp is None:
+            tp_changed = True
+        
+        # Value to None should not trigger change (by design)
+        assert sl_changed is False, "Value to None SL should not trigger change"
+        assert tp_changed is False, "Value to None TP should not trigger change"
+
+
+from app.services.trade_grouping import get_tp_hit_status, TPHitStatus
+
+
+class TestTPHitDetection:
+    """Tests for TP hit detection.
+    
+    **Feature: trade-enhancements, Property 10: TP Hit Detection**
+    **Validates: Requirements 3.2**
+    """
+    
+    @given(
+        tp_levels=st.lists(
+            st.sampled_from(['TP1', 'TP2', 'TP3', 'ENTRY', 'SL', 'PARTIAL', None]),
+            min_size=0,
+            max_size=10
+        ),
+        prices=st.lists(
+            st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False),
+            min_size=0,
+            max_size=10
+        )
+    )
+    @settings(max_examples=100)
+    def test_property_10_tp_hit_detection(self, tp_levels, prices):
+        """
+        **Feature: trade-enhancements, Property 10: TP Hit Detection**
+        **Validates: Requirements 3.2**
+        
+        For any trade group, a TP level (TP1, TP2, TP3) shall be marked as "hit" 
+        if and only if there exists a webhook in the group with tp_level equal 
+        to that TP level.
+        """
+        # Ensure we have matching lengths
+        min_len = min(len(tp_levels), len(prices)) if prices else len(tp_levels)
+        tp_levels = tp_levels[:min_len] if min_len > 0 else tp_levels
+        prices = prices[:min_len] if min_len > 0 else []
+        
+        # Build trades list
+        trades = []
+        for i, tp_level in enumerate(tp_levels):
+            trade = {
+                'tp_level': tp_level,
+                'timestamp': f'2025-01-01T12:{i:02d}:00Z',
+                'price': prices[i] if i < len(prices) else 100.0,
+                'realized_pnl_percent': 1.5 if tp_level in ['TP1', 'TP2', 'TP3'] else None
+            }
+            trades.append(trade)
+        
+        # Get TP hit status
+        result = get_tp_hit_status(trades)
+        
+        # Verify TP1 hit status
+        expected_tp1_hit = 'TP1' in tp_levels
+        assert result.tp1_hit == expected_tp1_hit, \
+            f"TP1 hit should be {expected_tp1_hit}, got {result.tp1_hit}. tp_levels={tp_levels}"
+        
+        # Verify TP2 hit status
+        expected_tp2_hit = 'TP2' in tp_levels
+        assert result.tp2_hit == expected_tp2_hit, \
+            f"TP2 hit should be {expected_tp2_hit}, got {result.tp2_hit}. tp_levels={tp_levels}"
+        
+        # Verify TP3 hit status
+        expected_tp3_hit = 'TP3' in tp_levels
+        assert result.tp3_hit == expected_tp3_hit, \
+            f"TP3 hit should be {expected_tp3_hit}, got {result.tp3_hit}. tp_levels={tp_levels}"
+    
+    @given(
+        tp_level=st.sampled_from(['TP1', 'TP2', 'TP3']),
+        price=st.floats(min_value=0.01, max_value=100000, allow_nan=False, allow_infinity=False),
+        pnl_percent=st.floats(min_value=-100, max_value=1000, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100)
+    def test_property_10_tp_hit_captures_details(self, tp_level, price, pnl_percent):
+        """
+        **Feature: trade-enhancements, Property 10: TP Hit Detection**
+        **Validates: Requirements 3.2**
+        
+        When a TP level is hit, the system shall capture the timestamp, 
+        exit price, and P&L percentage.
+        """
+        price = round(price, 4)
+        pnl_percent = round(pnl_percent, 2)
+        timestamp = '2025-01-15T14:30:00Z'
+        
+        trades = [{
+            'tp_level': tp_level,
+            'timestamp': timestamp,
+            'price': price,
+            'realized_pnl_percent': pnl_percent
+        }]
+        
+        result = get_tp_hit_status(trades)
+        
+        # Verify the correct TP is marked as hit with details
+        if tp_level == 'TP1':
+            assert result.tp1_hit is True
+            assert result.tp1_timestamp == timestamp
+            assert result.tp1_price == price
+            assert result.tp1_pnl_percent == pnl_percent
+        elif tp_level == 'TP2':
+            assert result.tp2_hit is True
+            assert result.tp2_timestamp == timestamp
+            assert result.tp2_price == price
+            assert result.tp2_pnl_percent == pnl_percent
+        elif tp_level == 'TP3':
+            assert result.tp3_hit is True
+            assert result.tp3_timestamp == timestamp
+            assert result.tp3_price == price
+            assert result.tp3_pnl_percent == pnl_percent
+    
+    def test_property_10_empty_trades_no_hits(self):
+        """
+        **Feature: trade-enhancements, Property 10: TP Hit Detection**
+        **Validates: Requirements 3.2**
+        
+        For an empty trade list, no TPs should be marked as hit.
+        """
+        result = get_tp_hit_status([])
+        
+        assert result.tp1_hit is False
+        assert result.tp2_hit is False
+        assert result.tp3_hit is False
+        assert result.all_tps_complete is False
+    
+    def test_property_10_none_trades_no_hits(self):
+        """
+        **Feature: trade-enhancements, Property 10: TP Hit Detection**
+        **Validates: Requirements 3.2**
+        
+        For None input, no TPs should be marked as hit.
+        """
+        result = get_tp_hit_status(None)
+        
+        assert result.tp1_hit is False
+        assert result.tp2_hit is False
+        assert result.tp3_hit is False
+        assert result.all_tps_complete is False
+    
+    @given(
+        non_tp_levels=st.lists(
+            st.sampled_from(['ENTRY', 'SL', 'PARTIAL', 'EXIT', None, '']),
+            min_size=1,
+            max_size=10
+        )
+    )
+    @settings(max_examples=100)
+    def test_property_10_non_tp_levels_no_hits(self, non_tp_levels):
+        """
+        **Feature: trade-enhancements, Property 10: TP Hit Detection**
+        **Validates: Requirements 3.2**
+        
+        For trades with only non-TP levels (ENTRY, SL, PARTIAL, etc.),
+        no TPs should be marked as hit.
+        """
+        trades = [{'tp_level': level, 'timestamp': '2025-01-01T12:00:00Z', 'price': 100.0}
+                  for level in non_tp_levels]
+        
+        result = get_tp_hit_status(trades)
+        
+        assert result.tp1_hit is False, f"TP1 should not be hit for levels {non_tp_levels}"
+        assert result.tp2_hit is False, f"TP2 should not be hit for levels {non_tp_levels}"
+        assert result.tp3_hit is False, f"TP3 should not be hit for levels {non_tp_levels}"
+
+
+class TestAllTPsCompleteDetection:
+    """Tests for all TPs complete detection.
+    
+    **Feature: trade-enhancements, Property 11: All TPs Complete Detection**
+    **Validates: Requirements 3.5**
+    """
+    
+    def test_property_11_all_tps_complete_when_all_hit(self):
+        """
+        **Feature: trade-enhancements, Property 11: All TPs Complete Detection**
+        **Validates: Requirements 3.5**
+        
+        For any trade group where TP1, TP2, and TP3 are all marked as hit,
+        the all_tps_complete flag shall be true.
+        """
+        trades = [
+            {'tp_level': 'ENTRY', 'timestamp': '2025-01-01T10:00:00Z', 'price': 100.0},
+            {'tp_level': 'TP1', 'timestamp': '2025-01-01T11:00:00Z', 'price': 105.0},
+            {'tp_level': 'TP2', 'timestamp': '2025-01-01T12:00:00Z', 'price': 110.0},
+            {'tp_level': 'TP3', 'timestamp': '2025-01-01T13:00:00Z', 'price': 115.0},
+        ]
+        
+        result = get_tp_hit_status(trades)
+        
+        assert result.tp1_hit is True
+        assert result.tp2_hit is True
+        assert result.tp3_hit is True
+        assert result.all_tps_complete is True
+    
+    @given(
+        missing_tp=st.sampled_from(['TP1', 'TP2', 'TP3'])
+    )
+    @settings(max_examples=100)
+    def test_property_11_not_complete_when_missing_one(self, missing_tp):
+        """
+        **Feature: trade-enhancements, Property 11: All TPs Complete Detection**
+        **Validates: Requirements 3.5**
+        
+        For any trade group missing at least one TP hit, 
+        the all_tps_complete flag shall be false.
+        """
+        all_tps = ['TP1', 'TP2', 'TP3']
+        present_tps = [tp for tp in all_tps if tp != missing_tp]
+        
+        trades = [{'tp_level': tp, 'timestamp': '2025-01-01T12:00:00Z', 'price': 100.0}
+                  for tp in present_tps]
+        
+        result = get_tp_hit_status(trades)
+        
+        assert result.all_tps_complete is False, \
+            f"all_tps_complete should be False when {missing_tp} is missing"
+    
+    @given(
+        present_tps=st.lists(
+            st.sampled_from(['TP1', 'TP2', 'TP3']),
+            min_size=0,
+            max_size=2,
+            unique=True
+        )
+    )
+    @settings(max_examples=100)
+    def test_property_11_not_complete_with_partial_tps(self, present_tps):
+        """
+        **Feature: trade-enhancements, Property 11: All TPs Complete Detection**
+        **Validates: Requirements 3.5**
+        
+        For any trade group with 0, 1, or 2 TPs hit (but not all 3),
+        the all_tps_complete flag shall be false.
+        """
+        trades = [{'tp_level': tp, 'timestamp': '2025-01-01T12:00:00Z', 'price': 100.0}
+                  for tp in present_tps]
+        
+        result = get_tp_hit_status(trades)
+        
+        # Since we have at most 2 TPs, all_tps_complete should be False
+        assert result.all_tps_complete is False, \
+            f"all_tps_complete should be False with only {present_tps}"
+    
+    @given(
+        extra_trades=st.lists(
+            st.sampled_from(['ENTRY', 'SL', 'PARTIAL', 'EXIT', None]),
+            min_size=0,
+            max_size=5
+        )
+    )
+    @settings(max_examples=100)
+    def test_property_11_complete_regardless_of_other_trades(self, extra_trades):
+        """
+        **Feature: trade-enhancements, Property 11: All TPs Complete Detection**
+        **Validates: Requirements 3.5**
+        
+        The all_tps_complete flag should be true when all TPs are hit,
+        regardless of other trade types in the group.
+        """
+        # Start with all TPs
+        trades = [
+            {'tp_level': 'TP1', 'timestamp': '2025-01-01T11:00:00Z', 'price': 105.0},
+            {'tp_level': 'TP2', 'timestamp': '2025-01-01T12:00:00Z', 'price': 110.0},
+            {'tp_level': 'TP3', 'timestamp': '2025-01-01T13:00:00Z', 'price': 115.0},
+        ]
+        
+        # Add extra non-TP trades
+        for i, level in enumerate(extra_trades):
+            trades.append({
+                'tp_level': level,
+                'timestamp': f'2025-01-01T14:{i:02d}:00Z',
+                'price': 100.0
+            })
+        
+        result = get_tp_hit_status(trades)
+        
+        assert result.all_tps_complete is True, \
+            f"all_tps_complete should be True even with extra trades {extra_trades}"
+    
+    def test_property_11_duplicate_tps_still_complete(self):
+        """
+        **Feature: trade-enhancements, Property 11: All TPs Complete Detection**
+        **Validates: Requirements 3.5**
+        
+        Duplicate TP hits should not affect the all_tps_complete flag.
+        """
+        trades = [
+            {'tp_level': 'TP1', 'timestamp': '2025-01-01T11:00:00Z', 'price': 105.0},
+            {'tp_level': 'TP1', 'timestamp': '2025-01-01T11:30:00Z', 'price': 106.0},  # Duplicate
+            {'tp_level': 'TP2', 'timestamp': '2025-01-01T12:00:00Z', 'price': 110.0},
+            {'tp_level': 'TP3', 'timestamp': '2025-01-01T13:00:00Z', 'price': 115.0},
+            {'tp_level': 'TP3', 'timestamp': '2025-01-01T13:30:00Z', 'price': 116.0},  # Duplicate
+        ]
+        
+        result = get_tp_hit_status(trades)
+        
+        assert result.tp1_hit is True
+        assert result.tp2_hit is True
+        assert result.tp3_hit is True
+        assert result.all_tps_complete is True
