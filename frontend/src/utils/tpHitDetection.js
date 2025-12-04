@@ -13,6 +13,8 @@
  * @property {string|null} timestamp - ISO timestamp when TP was hit
  * @property {number|null} exitPrice - Exit price when TP was hit
  * @property {number|null} pnlPercent - P&L percentage for this TP exit
+ * @property {number|null} quantity - Quantity sold at this TP
+ * @property {number|null} positionPercent - Percentage of total position sold at this TP
  */
 
 /**
@@ -92,7 +94,19 @@ export function getTPHitStatus(trades) {
       tp3Price: null,
       tp3PnlPercent: null,
       allTpsComplete: false,
-      tpDetails: []
+      tpDetails: [],
+      entryQuantity: null
+    }
+  }
+
+  // Find entry quantity from the entry trade
+  let entryQuantity = null
+  for (const trade of trades) {
+    const actionType = determineActionType(trade)
+    if (actionType === 'Entry') {
+      entryQuantity = trade.quantity || trade.metadata?.order_contracts || null
+      if (entryQuantity) entryQuantity = parseFloat(entryQuantity)
+      break
     }
   }
 
@@ -110,7 +124,8 @@ export function getTPHitStatus(trades) {
     tp3Price: null,
     tp3PnlPercent: null,
     allTpsComplete: false,
-    tpDetails: []
+    tpDetails: [],
+    entryQuantity
   }
 
   // Process each trade to find TP hits
@@ -119,6 +134,11 @@ export function getTPHitStatus(trades) {
     const exitPrice = trade.price || trade.metadata?.order_price || null
     const timestamp = trade.timestamp || null
     const pnlPercent = trade.realized_pnl_percent ?? null
+    const quantity = trade.quantity || trade.metadata?.order_contracts || null
+    const quantityNum = quantity ? parseFloat(quantity) : null
+    const positionPercent = (entryQuantity && quantityNum) 
+      ? (quantityNum / entryQuantity) * 100 
+      : null
 
     if (actionType === 'TP1' && !result.tp1Hit) {
       result.tp1Hit = true
@@ -130,7 +150,9 @@ export function getTPHitStatus(trades) {
         isHit: true,
         timestamp,
         exitPrice,
-        pnlPercent
+        pnlPercent,
+        quantity: quantityNum,
+        positionPercent
       })
     } else if (actionType === 'TP2' && !result.tp2Hit) {
       result.tp2Hit = true
@@ -142,7 +164,9 @@ export function getTPHitStatus(trades) {
         isHit: true,
         timestamp,
         exitPrice,
-        pnlPercent
+        pnlPercent,
+        quantity: quantityNum,
+        positionPercent
       })
     } else if (actionType === 'TP3' && !result.tp3Hit) {
       result.tp3Hit = true
@@ -154,20 +178,22 @@ export function getTPHitStatus(trades) {
         isHit: true,
         timestamp,
         exitPrice,
-        pnlPercent
+        pnlPercent,
+        quantity: quantityNum,
+        positionPercent
       })
     }
   }
 
   // Add non-hit TPs to details
   if (!result.tp1Hit) {
-    result.tpDetails.push({ level: 'TP1', isHit: false, timestamp: null, exitPrice: null, pnlPercent: null })
+    result.tpDetails.push({ level: 'TP1', isHit: false, timestamp: null, exitPrice: null, pnlPercent: null, quantity: null, positionPercent: null })
   }
   if (!result.tp2Hit) {
-    result.tpDetails.push({ level: 'TP2', isHit: false, timestamp: null, exitPrice: null, pnlPercent: null })
+    result.tpDetails.push({ level: 'TP2', isHit: false, timestamp: null, exitPrice: null, pnlPercent: null, quantity: null, positionPercent: null })
   }
   if (!result.tp3Hit) {
-    result.tpDetails.push({ level: 'TP3', isHit: false, timestamp: null, exitPrice: null, pnlPercent: null })
+    result.tpDetails.push({ level: 'TP3', isHit: false, timestamp: null, exitPrice: null, pnlPercent: null, quantity: null, positionPercent: null })
   }
 
   // Sort tpDetails by level
@@ -193,7 +219,7 @@ export function getTPTooltipMessage(tpInfo) {
     return `${tpInfo.level}: Not hit`
   }
 
-  const parts = [`${tpInfo.level}: Hit`]
+  const parts = [`${tpInfo.level}: Hit ✓`]
   
   if (tpInfo.timestamp) {
     const date = new Date(tpInfo.timestamp)
@@ -202,6 +228,15 @@ export function getTPTooltipMessage(tpInfo) {
   
   if (tpInfo.exitPrice !== null && tpInfo.exitPrice !== undefined) {
     parts.push(`Price: ${parseFloat(tpInfo.exitPrice).toFixed(4)}`)
+  }
+  
+  // Show quantity and position percentage
+  if (tpInfo.quantity !== null && tpInfo.quantity !== undefined) {
+    let qtyStr = `Qty: ${tpInfo.quantity.toFixed(2)}`
+    if (tpInfo.positionPercent !== null && tpInfo.positionPercent !== undefined) {
+      qtyStr += ` (${tpInfo.positionPercent.toFixed(1)}% of position)`
+    }
+    parts.push(qtyStr)
   }
   
   if (tpInfo.pnlPercent !== null && tpInfo.pnlPercent !== undefined) {
