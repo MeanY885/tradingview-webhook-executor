@@ -1,7 +1,10 @@
 """TradingView webhook alert parsing service."""
 import json
 import re
+import logging
 from typing import Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class TradingViewAlertParser:
@@ -28,11 +31,19 @@ class TradingViewAlertParser:
         # Try parsing as JSON first
         try:
             data = json.loads(raw_message)
+            logger.debug(f"Parsed message as JSON: {list(data.keys())}")
             return TradingViewAlertParser._parse_json(data)
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError as e:
+            # Not valid JSON, try text format
+            logger.debug(f"JSON parse failed, trying text format: {str(e)[:100]}")
             pass
+        except ValueError as e:
+            # Valid JSON but invalid field values - provide clear error
+            logger.warning(f"JSON field extraction error: {e}")
+            raise ValueError(f"Invalid webhook data: {e}") from e
 
-        # Fall back to text parsing
+        # Fall back to text parsing only for non-JSON
+        logger.debug("Attempting text format parsing")
         return TradingViewAlertParser._parse_text(raw_message)
 
     @staticmethod
@@ -137,6 +148,22 @@ class TradingViewAlertParser:
             except (ValueError, TypeError):
                 pass
 
+        # Extract take_profit safely
+        take_profit = None
+        if 'take_profit' in data:
+            try:
+                take_profit = float(data['take_profit'])
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid take_profit value '{data['take_profit']}': {e}")
+
+        # Extract trailing_stop_pct safely
+        trailing_stop_pct = None
+        if 'trailing_stop_pct' in data:
+            try:
+                trailing_stop_pct = float(data['trailing_stop_pct'])
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid trailing_stop_pct value '{data['trailing_stop_pct']}': {e}")
+
         return {
             'symbol': symbol,
             'action': action,
@@ -144,8 +171,8 @@ class TradingViewAlertParser:
             'quantity': quantity,
             'price': price,
             'stop_loss': stop_loss,
-            'take_profit': float(data['take_profit']) if 'take_profit' in data else None,
-            'trailing_stop_pct': float(data['trailing_stop_pct']) if 'trailing_stop_pct' in data else None,
+            'take_profit': take_profit,
+            'trailing_stop_pct': trailing_stop_pct,
             'leverage': leverage,
             'test_mode': bool(data.get('test_mode', False)),  # Enable test mode to skip actual trade execution
             'metadata': {  # Store additional TradingView data for debugging/logging
