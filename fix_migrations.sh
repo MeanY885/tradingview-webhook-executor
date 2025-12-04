@@ -6,7 +6,7 @@ set -e
 
 echo "🔧 Applying missing database columns..."
 
-docker compose exec -T db psql -U postgres -d tradingview <<EOF
+docker-compose exec -T db psql -U postgres -d tradingview <<EOF
 -- Migration 007: Add TP tracking fields
 ALTER TABLE webhook_logs ADD COLUMN IF NOT EXISTS tp_level VARCHAR(20);
 ALTER TABLE webhook_logs ADD COLUMN IF NOT EXISTS position_size_after FLOAT;
@@ -26,6 +26,6 @@ EOF
 echo "✅ Columns added successfully!"
 
 echo "🔄 Restarting backend..."
-docker compose restart backend
+docker-compose restart backend
 
 echo "✅ Done! Backend restarted."
