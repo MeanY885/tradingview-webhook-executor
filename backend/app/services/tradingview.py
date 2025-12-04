@@ -34,8 +34,14 @@ class TradingViewAlertParser:
             logger.debug(f"Parsed message as JSON: {list(data.keys())}")
             return TradingViewAlertParser._parse_json(data)
         except json.JSONDecodeError as e:
-            # Not valid JSON, try text format
-            logger.debug(f"JSON parse failed, trying text format: {str(e)[:100]}")
+            # Not valid JSON, try to fix common issues
+            logger.debug(f"JSON parse failed: {str(e)[:100]}, attempting to fix")
+            fixed_data = TradingViewAlertParser._try_fix_malformed_json(raw_message)
+            if fixed_data:
+                logger.debug(f"Fixed malformed JSON, parsed keys: {list(fixed_data.keys())}")
+                return TradingViewAlertParser._parse_json(fixed_data)
+            # Fall back to text parsing
+            logger.debug("Could not fix JSON, trying text format")
             pass
         except ValueError as e:
             # Valid JSON but invalid field values - provide clear error
@@ -45,6 +51,68 @@ class TradingViewAlertParser:
         # Fall back to text parsing only for non-JSON
         logger.debug("Attempting text format parsing")
         return TradingViewAlertParser._parse_text(raw_message)
+    
+    @staticmethod
+    def _try_fix_malformed_json(raw_message: str) -> Optional[Dict]:
+        """
+        Attempt to fix common JSON malformations from TradingView webhooks.
+        
+        Common issues:
+        - Trailing commas: "key": "value",}
+        - Double commas: "key": "value",,
+        - Unescaped quotes in strings
+        - Missing closing braces
+        """
+        if not raw_message or not raw_message.strip().startswith('{'):
+            return None
+        
+        cleaned = raw_message.strip()
+        
+        # Fix double commas and trailing commas before closing braces
+        # Pattern: ,, -> ,
+        cleaned = re.sub(r',\s*,', ',', cleaned)
+        # Pattern: ,} -> }
+        cleaned = re.sub(r',\s*}', '}', cleaned)
+        # Pattern: ,] -> ]
+        cleaned = re.sub(r',\s*]', ']', cleaned)
+        
+        # Fix ",", pattern (extra quote-comma-quote)
+        cleaned = re.sub(r'",\s*",', '",', cleaned)
+        
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+        
+        # More aggressive fix: extract key-value pairs manually
+        try:
+            result = {}
+            # Match "key": "value" or "key": number patterns
+            pattern = r'"([^"]+)"\s*:\s*(?:"([^"]*)"|([\d.]+|true|false|null))'
+            matches = re.findall(pattern, cleaned, re.IGNORECASE)
+            for key, str_val, other_val in matches:
+                if str_val:
+                    result[key] = str_val
+                elif other_val:
+                    val = other_val.lower()
+                    if val == 'true':
+                        result[key] = True
+                    elif val == 'false':
+                        result[key] = False
+                    elif val == 'null':
+                        result[key] = None
+                    else:
+                        try:
+                            result[key] = float(other_val) if '.' in other_val else int(other_val)
+                        except ValueError:
+                            result[key] = other_val
+            
+            if result:
+                return result
+        except Exception as e:
+            logger.debug(f"Manual JSON extraction failed: {e}")
+        
+        return None
 
     @staticmethod
     def _parse_json(data: dict) -> Dict:
