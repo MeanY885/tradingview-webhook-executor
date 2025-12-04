@@ -6,9 +6,10 @@ set -e  # Exit on error
 
 echo "🚀 Starting deployment..."
 
-# Pull latest code
+# Pull latest code (force reset to handle any local changes)
 echo "📥 Pulling latest code from GitHub..."
-git pull origin main
+git fetch origin
+git reset --hard origin/main
 
 # Stop containers
 echo "🛑 Stopping containers..."
