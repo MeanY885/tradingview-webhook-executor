@@ -23,10 +23,13 @@ import { format, formatDistanceStrict } from 'date-fns'
 import api from '../../services/api'
 import TPCheckboxes from './TPCheckboxes'
 import SLTPChangeIndicator from './SLTPChangeIndicator'
+import WebhookDetailModal from './WebhookDetailModal'
 
 const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
   const [expandedGroups, setExpandedGroups] = useState({})
   const [reprocessing, setReprocessing] = useState(false)
+  const [selectedWebhook, setSelectedWebhook] = useState(null)
+  const [modalOpen, setModalOpen] = useState(false)
 
   // Group webhooks by trade_group_id
   const groupedTrades = useMemo(() => {
@@ -54,6 +57,24 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
       ...prev,
       [groupId]: !prev[groupId]
     }))
+  }
+
+  const handleTradeClick = (e, trade) => {
+    e.stopPropagation()
+    setSelectedWebhook(trade)
+    setModalOpen(true)
+  }
+
+  const handleCloseModal = () => {
+    setModalOpen(false)
+    setSelectedWebhook(null)
+  }
+
+  const handleWebhookUpdated = (updatedWebhook) => {
+    setSelectedWebhook(updatedWebhook)
+    if (onRefresh) {
+      onRefresh()
+    }
   }
 
   const determineActionType = (webhook) => {
@@ -607,10 +628,13 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
                     return (
                       <ListItem
                         key={trade.id}
+                        onClick={(e) => handleTradeClick(e, trade)}
                         sx={{
                           position: 'relative',
                           flexDirection: 'column',
                           alignItems: 'stretch',
+                          cursor: 'pointer',
+                          '&:hover': { bgcolor: 'action.hover' },
                           '&::before': index < trades.length - 1 ? {
                             content: '""',
                             position: 'absolute',
@@ -785,6 +809,18 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
           </Card>
         )
       })}
+
+      {/* Webhook Detail Modal */}
+      <WebhookDetailModal
+        webhook={selectedWebhook}
+        open={modalOpen}
+        onClose={handleCloseModal}
+        onDelete={(id) => {
+          handleCloseModal()
+          if (onWebhookDeleted) onWebhookDeleted(id)
+        }}
+        onReprocess={handleWebhookUpdated}
+      />
     </Stack>
   )
 }
