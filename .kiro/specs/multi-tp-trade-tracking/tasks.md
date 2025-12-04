@@ -1,0 +1,122 @@
+# Implementation Plan
+
+- [x] 1. Create WebhookNormalizer service for robust JSON parsing
+  - [x] 1.1 Create `webhook_normalizer.py` with NormalizedWebhook dataclass
+    - Define dataclass with all required fields (symbol, action, order_type, alert_type, prices, quantities, position state)
+    - Include type hints and default values for optional fields
+    - _Requirements: 1.1, 4.1, 4.2, 5.1, 5.2_
+  - [x] 1.2 Implement `parse_alert_message()` for nested JSON extraction
+    - Handle malformed JSON (missing braces, extra quotes, trailing commas)
+    - Extract order_type, leverage, stop_loss_price, pyramiding from embedded string
+    - Return empty dict on parse failure (graceful degradation)
+    - _Requirements: 4.1, 4.2, 5.1_
+  - [x] 1.3 Write property test for alert message parsing
+    - **Property 0: Alert message parsing round-trip**
+    - **Validates: Requirements 4.1, 4.2**
+  - [x] 1.4 Implement `normalize()` method to create NormalizedWebhook from raw payload
+    - Merge fields from main payload and parsed alert_message
+    - Convert string values to appropriate types (float for prices/quantities)
+    - Handle field name variations (order_contracts vs contracts vs quantity)
+    - _Requirements: 1.1, 5.1, 5.2_
+  - [x] 1.5 Write property test for webhook normalization completeness
+    - **Property 13: Webhook normalization completeness**
+    - **Validates: Requirements 1.1, 4.1, 4.2, 5.1, 5.2**
+  - [x] 1.6 Implement `detect_alert_type()` for TP level detection
+    - Check order_type for entry vs reduce vs exit
+    - For exits: check order_comment first (TP1, TP2, TP3, SL)
+    - Fallback to order_id pattern matching (1st Target, 2nd Target, 3rd Target)
+    - Default to PARTIAL for reduce without markers
+    - _Requirements: 4.1, 4.2, 4.3, 4.4_
+  - [x] 1.7 Write property tests for TP level detection
+    - **Property 7: TP Level Detection from order_comment**
+    - **Property 8: TP Level Detection from order_id**
+    - **Property 9: order_comment Precedence**
+    - **Property 10: Reduce Without TP Markers**
+    - **Validates: Requirements 4.1, 4.2, 4.3, 4.4**
+  - [x] 1.8 Write property test for order type detection
+    - **Property 14: Order Type Detection**
+    - **Validates: Requirements 1.4, 4.3**
+
+- [x] 2. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 3. Add database schema for TP tracking fields
+  - [x] 3.1 Create migration `007_add_tp_tracking_fields.sql`
+    - Add columns: tp_level, position_size_after, entry_price, realized_pnl_percent, realized_pnl_absolute
+    - Add index on tp_level for filtering
+    - _Requirements: 1.1, 1.2, 2.1, 2.2_
+  - [x] 3.2 Update WebhookLog model with new fields
+    - Add tp_level, position_size_after, entry_price, realized_pnl_percent, realized_pnl_absolute columns
+    - Update to_dict() to include new fields
+    - _Requirements: 1.1, 1.2, 2.3_
+
+- [x] 4. Integrate WebhookNormalizer into trade grouping flow
+  - [x] 4.1 Update TradeGroupingService to use WebhookNormalizer
+    - Replace manual parsing with normalizer.normalize() call
+    - Use normalized.alert_type for TP level
+    - Use normalized.is_position_closed for group closure detection
+    - _Requirements: 1.3, 1.4, 4.1, 4.2_
+  - [x] 4.2 Write property test for trade group closure detection
+    - **Property 2: Trade Group Closure Detection**
+    - **Validates: Requirements 1.3**
+  - [x] 4.3 Write property test for new group after flat position
+    - **Property 3: New Group After Flat Position**
+    - **Validates: Requirements 1.4**
+  - [x] 4.4 Update webhook handler to store new fields
+    - Store tp_level, position_size_after from normalized webhook
+    - Cache entry_price for the group on entry alerts
+    - _Requirements: 1.1, 1.2, 5.1, 5.2_
+  - [x] 4.5 Write property tests for position size and entry metadata
+    - **Property 1: Position Size Extraction**
+    - **Property 11: Entry Metadata Extraction**
+    - **Validates: Requirements 1.1, 5.1, 5.2**
+
+- [x] 5. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 6. Implement P&L Calculator service
+  - [x] 6.1 Create `pnl_calculator.py` with P&L calculation methods
+    - Implement calculate_exit_pnl() for single exit P&L (long and short formulas)
+    - Implement calculate_weighted_pnl() for total group P&L
+    - _Requirements: 2.1, 2.2, 2.4_
+  - [x] 6.2 Write property tests for P&L calculations
+    - **Property 4: P&L Calculation Correctness**
+    - **Property 5: Weighted Average P&L**
+    - **Validates: Requirements 2.1, 2.2, 2.4**
+  - [x] 6.3 Integrate P&L calculator into webhook processing
+    - Calculate and store realized_pnl_percent/absolute on each exit
+    - Look up entry_price from group's entry webhook
+    - _Requirements: 2.1, 2.2, 2.3_
+
+- [x] 7. Update frontend TradeGroupsView for enhanced display
+  - [x] 7.1 Update trade group header to show leverage and stop-loss
+    - Display leverage from entry alert
+    - Display stop_loss_price when available
+    - _Requirements: 5.1, 5.2_
+  - [x] 7.2 Enhance timeline to show position size after each action
+    - Display remaining position size after each TP hit
+    - Show visual progress bar of position reduction
+    - _Requirements: 1.2, 3.2_
+  - [x] 7.3 Add individual P&L display for each TP level
+    - Show P&L percentage and absolute value per exit
+    - Color code positive/negative P&L
+    - _Requirements: 2.3, 3.2_
+  - [x] 7.4 Add trade group summary for closed trades
+    - Display total P&L, duration, TP levels hit
+    - Show exit type (TP vs SL vs Manual)
+    - _Requirements: 3.4_
+  - [x] 7.5 Write property test for chronological ordering
+    - **Property 6: Chronological Ordering**
+    - **Validates: Requirements 3.1**
+
+- [x] 8. Handle concurrent trades on same symbol
+  - [x] 8.1 Update _find_active_trade_group to handle multiple open groups
+    - Use position_size continuity to match reduce alerts to correct group
+    - Consider timestamp proximity as secondary factor
+    - _Requirements: 6.1, 6.2_
+  - [x] 8.2 Write property test for concurrent trade separation
+    - **Property 12: Concurrent Trade Separation**
+    - **Validates: Requirements 6.1, 6.3**
+
+- [x] 9. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

@@ -36,6 +36,13 @@ class WebhookLog(db.Model):
     trade_group_id = db.Column(db.String(50))  # Auto-generated ID to group related trades
     trade_direction = db.Column(db.String(10))  # 'long' or 'short' - direction of the trade
 
+    # TP tracking fields
+    tp_level = db.Column(db.String(10))  # 'TP1', 'TP2', 'TP3', 'SL', 'PARTIAL'
+    position_size_after = db.Column(db.Float)  # Remaining position after this action
+    entry_price = db.Column(db.Float)  # Cached entry price for P&L calculations
+    realized_pnl_percent = db.Column(db.Float)  # P&L percentage for this specific exit
+    realized_pnl_absolute = db.Column(db.Float)  # P&L absolute value for this specific exit
+
     # Execution status
     status = db.Column(db.String(20), nullable=False)  # 'success', 'failed', 'invalid', 'test_success'
     broker_order_id = db.Column(db.String(50))
@@ -74,6 +81,11 @@ class WebhookLog(db.Model):
             'leverage': self.leverage,
             'trade_group_id': self.trade_group_id,
             'trade_direction': self.trade_direction,
+            'tp_level': self.tp_level,
+            'position_size_after': self.position_size_after,
+            'entry_price': self.entry_price,
+            'realized_pnl_percent': self.realized_pnl_percent,
+            'realized_pnl_absolute': self.realized_pnl_absolute,
             'metadata': metadata,
             'status': self.status,
             'broker_order_id': self.broker_order_id,

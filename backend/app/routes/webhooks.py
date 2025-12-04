@@ -11,6 +11,8 @@ from app.services.oanda import OandaClient
 from app.services.encryption import encryption_service
 from app.services.websocket import broadcast_webhook_event
 from app.services.trade_grouping import TradeGroupingService
+from app.services.webhook_normalizer import WebhookNormalizer, AlertType
+from app.services.pnl_calculator import PnLCalculator
 import logging
 import uuid
 
@@ -207,7 +209,15 @@ def _process_webhook(broker: str, webhook_identifier: str):
 
 
 def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, status='pending', error=None):
-    """Create webhook log entry."""
+    """Create webhook log entry with TP tracking fields.
+    
+    Uses WebhookNormalizer for consistent parsing and stores:
+    - tp_level: TP1, TP2, TP3, SL, PARTIAL, etc.
+    - position_size_after: Remaining position after this action
+    - entry_price: Cached entry price for P&L calculations
+    
+    Requirements: 1.1, 1.2, 5.1, 5.2
+    """
     import json
 
     # Generate unique client order ID
@@ -222,17 +232,72 @@ def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, sta
         except (TypeError, ValueError):
             logger.warning(f"Failed to serialize metadata to JSON: {metadata}")
 
-    # Determine trade group and direction
-    trade_group_id, trade_direction = TradeGroupingService.determine_trade_group(
+    # Build raw payload dict for normalization
+    raw_payload_dict = {}
+    try:
+        raw_payload_dict = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+    except (json.JSONDecodeError, TypeError):
+        raw_payload_dict = {}
+    
+    # Normalize the webhook payload to extract TP tracking fields
+    normalized = WebhookNormalizer.normalize(raw_payload_dict)
+    
+    # Determine trade group and direction using normalized data
+    result = TradeGroupingService.determine_trade_group_from_normalized(
         user_id=user_id,
-        symbol=params['symbol'],
-        params=params,
-        metadata=metadata
+        normalized=normalized
     )
+    trade_group_id = result.trade_group_id
+    trade_direction = result.trade_direction
+    
+    # Extract TP tracking fields from normalized webhook
+    tp_level = normalized.alert_type if normalized.alert_type != 'UNKNOWN' else None
+    position_size_after = normalized.position_size
+    
+    # Determine entry_price:
+    # - For entries: use the order_price from this webhook
+    # - For exits: use the cached entry_price from the trade group result
+    entry_price = None
+    if result.is_new_group:
+        # This is an entry - use the order price as entry price
+        entry_price = normalized.order_price
+    else:
+        # This is an exit - use the cached entry price from the group
+        entry_price = result.entry_price
+    
+    # Calculate P&L for exits (TP1, TP2, TP3, SL, PARTIAL, EXIT)
+    # Requirements: 2.1, 2.2, 2.3
+    realized_pnl_percent = None
+    realized_pnl_absolute = None
+    
+    exit_alert_types = [AlertType.TP1.value, AlertType.TP2.value, AlertType.TP3.value,
+                        AlertType.STOP_LOSS.value, AlertType.PARTIAL.value, AlertType.EXIT.value]
+    
+    if tp_level in exit_alert_types and entry_price and normalized.order_price and trade_direction:
+        try:
+            exit_quantity = normalized.order_contracts or params.get('quantity', 0)
+            if exit_quantity and exit_quantity > 0:
+                pnl_result = PnLCalculator.calculate_exit_pnl(
+                    entry_price=entry_price,
+                    exit_price=normalized.order_price,
+                    direction=trade_direction,
+                    quantity=exit_quantity
+                )
+                realized_pnl_percent = pnl_result.pnl_percent
+                realized_pnl_absolute = pnl_result.pnl_absolute
+                logger.info(f"Calculated P&L for {tp_level}: {realized_pnl_percent:.2f}% (${realized_pnl_absolute:.2f})")
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to calculate P&L: {e}")
+    
+    # Get leverage from normalized webhook (may be in alert_message)
+    leverage = normalized.leverage or params.get('leverage')
+    
+    # Get stop_loss from normalized webhook (may be in alert_message)
+    stop_loss = normalized.stop_loss_price or params.get('stop_loss')
 
     log = WebhookLog(
         user_id=user_id,
-        raw_payload=raw_payload,
+        raw_payload=raw_payload if isinstance(raw_payload, str) else json.dumps(raw_payload),
         source_ip=request.remote_addr,
         broker=broker,
         symbol=params['symbol'],
@@ -241,12 +306,19 @@ def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, sta
         order_type=params['order_type'],
         quantity=params['quantity'],
         price=params.get('price'),
-        stop_loss=params.get('stop_loss'),
+        stop_loss=stop_loss,
         take_profit=params.get('take_profit'),
         trailing_stop_pct=params.get('trailing_stop_pct'),
-        leverage=params.get('leverage'),
+        leverage=leverage,
         trade_group_id=trade_group_id,
         trade_direction=trade_direction,
+        # TP tracking fields
+        tp_level=tp_level,
+        position_size_after=position_size_after,
+        entry_price=entry_price,
+        # P&L fields (calculated for exits)
+        realized_pnl_percent=realized_pnl_percent,
+        realized_pnl_absolute=realized_pnl_absolute,
         metadata_json=metadata_json,
         status=status,
         client_order_id=client_order_id,

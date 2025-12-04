@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import {
   Box, Card, CardContent, Collapse, Typography, IconButton,
-  Chip, Divider, List, ListItem, Avatar, Tooltip, Stack
+  Chip, Divider, List, ListItem, Avatar, Tooltip, Stack,
+  LinearProgress, Paper
 } from '@mui/material'
 import {
   ExpandMore as ExpandMoreIcon,
@@ -12,31 +13,37 @@ import {
   CrisisAlert as StopLossIcon,
   EmojiEvents as TakeProfitIcon,
   CheckCircle as SuccessIcon,
-  Error as ErrorIcon,
-  Delete as DeleteIcon
+  Delete as DeleteIcon,
+  Speed as LeverageIcon,
+  Shield as StopLossShieldIcon,
+  Timer as DurationIcon
 } from '@mui/icons-material'
-import { format } from 'date-fns'
+import { format, formatDistanceStrict } from 'date-fns'
 import api from '../../services/api'
 
 const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
   const [expandedGroups, setExpandedGroups] = useState({})
 
   // Group webhooks by trade_group_id
-  const groupedTrades = webhooks.reduce((groups, webhook) => {
-    const groupId = webhook.trade_group_id || `ungrouped-${webhook.id}`
-    if (!groups[groupId]) {
-      groups[groupId] = []
-    }
-    groups[groupId].push(webhook)
-    return groups
-  }, {})
+  const groupedTrades = useMemo(() => {
+    return webhooks.reduce((groups, webhook) => {
+      const groupId = webhook.trade_group_id || `ungrouped-${webhook.id}`
+      if (!groups[groupId]) {
+        groups[groupId] = []
+      }
+      groups[groupId].push(webhook)
+      return groups
+    }, {})
+  }, [webhooks])
 
   // Sort groups by most recent first
-  const sortedGroups = Object.entries(groupedTrades).sort((a, b) => {
-    const aTime = new Date(a[1][0].timestamp).getTime()
-    const bTime = new Date(b[1][0].timestamp).getTime()
-    return bTime - aTime
-  })
+  const sortedGroups = useMemo(() => {
+    return Object.entries(groupedTrades).sort((a, b) => {
+      const aTime = new Date(a[1][0].timestamp).getTime()
+      const bTime = new Date(b[1][0].timestamp).getTime()
+      return bTime - aTime
+    })
+  }, [groupedTrades])
 
   const toggleGroup = (groupId) => {
     setExpandedGroups(prev => ({
@@ -46,6 +53,17 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
   }
 
   const determineActionType = (webhook) => {
+    // Use tp_level from backend if available
+    if (webhook.tp_level) {
+      if (webhook.tp_level === 'ENTRY') return 'Entry'
+      if (webhook.tp_level === 'TP1') return 'TP1'
+      if (webhook.tp_level === 'TP2') return 'TP2'
+      if (webhook.tp_level === 'TP3') return 'TP3'
+      if (webhook.tp_level === 'SL') return 'SL Close'
+      if (webhook.tp_level === 'PARTIAL') return 'Partial'
+    }
+
+    // Fallback to manual detection
     const comment = webhook.metadata?.order_comment?.toLowerCase() || ''
     const orderId = webhook.metadata?.order_id?.toLowerCase() || ''
     const alertMessage = webhook.metadata?.alert_message_params?.order_type?.toLowerCase() || ''
@@ -57,7 +75,7 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
     if (comment.includes('tp2') || orderId.includes('2nd target')) return 'TP2'
     if (comment.includes('tp3') || orderId.includes('3rd target')) return 'TP3'
     if (comment.includes('sl') || comment.includes('stop loss')) return 'SL Close'
-    if (alertMessage.includes('reduce')) return 'Reduce'
+    if (alertMessage.includes('reduce')) return 'Partial'
     if (webhook.action === 'buy' && !comment) return 'Entry'
     return 'Close'
   }
@@ -78,40 +96,138 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
     }
   }
 
-  const calculatePnL = (trades) => {
+  // Get entry trade metadata (leverage, stop_loss)
+  const getEntryMetadata = (trades) => {
+    const sortedTrades = [...trades].sort((a, b) =>
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    )
+    const entry = sortedTrades.find(t => {
+      const actionType = determineActionType(t)
+      return actionType === 'Entry'
+    }) || sortedTrades[0]
+
+    return {
+      leverage: entry?.leverage || entry?.metadata?.alert_message_params?.leverage || null,
+      stopLoss: entry?.stop_loss || entry?.metadata?.alert_message_params?.stop_loss_price || null,
+      entryPrice: entry?.entry_price || entry?.price || entry?.metadata?.order_price || null,
+      entryQuantity: entry?.quantity || entry?.metadata?.order_contracts || null
+    }
+  }
+
+  // Calculate total P&L from individual exit P&Ls or compute manually
+  const calculateGroupPnL = (trades, direction) => {
     const sortedTrades = [...trades].sort((a, b) =>
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     )
 
-    const entry = sortedTrades.find(t => t.action === 'buy')
-    const exits = sortedTrades.filter(t => t.action === 'sell')
+    // Try to use pre-calculated P&L values from backend
+    const exitsWithPnL = sortedTrades.filter(t => 
+      t.realized_pnl_percent !== null && t.realized_pnl_percent !== undefined
+    )
+
+    if (exitsWithPnL.length > 0) {
+      let totalWeightedPnL = 0
+      let totalQuantity = 0
+
+      exitsWithPnL.forEach(exit => {
+        const qty = exit.quantity || 1
+        totalWeightedPnL += exit.realized_pnl_percent * qty
+        totalQuantity += qty
+      })
+
+      return totalQuantity > 0 ? totalWeightedPnL / totalQuantity : 0
+    }
+
+    // Fallback to manual calculation
+    const entry = sortedTrades.find(t => determineActionType(t) === 'Entry')
+    const exits = sortedTrades.filter(t => {
+      const actionType = determineActionType(t)
+      return actionType !== 'Entry'
+    })
 
     if (!entry || exits.length === 0) return null
 
-    const entryPrice = entry.price || entry.metadata?.order_price
+    const entryPrice = entry.entry_price || entry.price || entry.metadata?.order_price
     let totalPnL = 0
     let totalQuantity = 0
 
     exits.forEach(exit => {
       const exitPrice = exit.price || exit.metadata?.order_price
-      const quantity = exit.quantity
-      if (entryPrice && exitPrice && quantity) {
-        const pnl = ((exitPrice - entryPrice) / entryPrice) * 100
+      const quantity = exit.quantity || 1
+      if (entryPrice && exitPrice) {
+        let pnl
+        if (direction === 'short') {
+          pnl = ((entryPrice - exitPrice) / entryPrice) * 100
+        } else {
+          pnl = ((exitPrice - entryPrice) / entryPrice) * 100
+        }
         totalPnL += pnl * quantity
         totalQuantity += quantity
       }
     })
 
-    return totalQuantity > 0 ? totalPnL / totalQuantity : 0
+    return totalQuantity > 0 ? totalPnL / totalQuantity : null
   }
 
   const getTradeStatus = (trades) => {
     const hasFlat = trades.some(t => t.metadata?.market_position === 'flat')
-    const allSuccess = trades.every(t => t.status === 'test_success' || t.status === 'success')
+    const hasZeroPosition = trades.some(t => 
+      t.position_size_after === 0 || t.metadata?.position_size === '0'
+    )
 
-    if (hasFlat) return 'CLOSED'
-    if (allSuccess) return 'ACTIVE'
-    return 'PENDING'
+    if (hasFlat || hasZeroPosition) return 'CLOSED'
+    return 'ACTIVE'
+  }
+
+  // Get TP levels hit in the trade
+  const getTPLevelsHit = (trades) => {
+    const tpLevels = []
+    trades.forEach(t => {
+      const actionType = determineActionType(t)
+      if (['TP1', 'TP2', 'TP3'].includes(actionType) && !tpLevels.includes(actionType)) {
+        tpLevels.push(actionType)
+      }
+    })
+    return tpLevels.sort()
+  }
+
+  // Determine exit type for closed trades
+  const getExitType = (trades) => {
+    const sortedTrades = [...trades].sort((a, b) =>
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    )
+    
+    for (const trade of sortedTrades) {
+      const actionType = determineActionType(trade)
+      if (actionType === 'SL Close') return 'SL'
+      if (['TP1', 'TP2', 'TP3'].includes(actionType)) return 'TP'
+    }
+    return 'MANUAL'
+  }
+
+  // Calculate trade duration
+  const getTradeDuration = (trades) => {
+    const sortedTrades = [...trades].sort((a, b) =>
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    )
+    
+    if (sortedTrades.length < 2) return null
+    
+    const firstTrade = sortedTrades[0]
+    const lastTrade = sortedTrades[sortedTrades.length - 1]
+    
+    return formatDistanceStrict(
+      new Date(firstTrade.timestamp),
+      new Date(lastTrade.timestamp)
+    )
+  }
+
+  // Calculate position reduction percentage for progress bar
+  const getPositionProgress = (trade, entryQuantity) => {
+    if (!entryQuantity || entryQuantity === 0) return 0
+    const remaining = trade.position_size_after ?? entryQuantity
+    const reduced = entryQuantity - remaining
+    return Math.min(100, Math.max(0, (reduced / entryQuantity) * 100))
   }
 
   const handleDeleteGroup = async (e, groupId, trades) => {
@@ -122,7 +238,6 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
     }
 
     try {
-      // Delete all webhooks in the group
       await Promise.all(trades.map(trade =>
         api.delete(`/api/webhook-logs/${trade.id}`)
       ))
@@ -136,6 +251,13 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
       console.error('Error deleting trade group:', error)
       alert('Failed to delete trade group')
     }
+  }
+
+  // Format P&L display
+  const formatPnL = (pnl, showSign = true) => {
+    if (pnl === null || pnl === undefined) return 'N/A'
+    const sign = showSign && pnl >= 0 ? '+' : ''
+    return `${sign}${pnl.toFixed(2)}%`
   }
 
   if (sortedGroups.length === 0) {
@@ -152,14 +274,19 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
         const isExpanded = expandedGroups[groupId]
         const direction = trades[0]?.trade_direction
         const symbol = trades[0]?.symbol
-        const pnl = calculatePnL(trades)
         const status = getTradeStatus(trades)
-        const entryTrade = [...trades].sort((a, b) =>
+        const pnl = calculateGroupPnL(trades, direction)
+        const entryMeta = getEntryMetadata(trades)
+        const tpLevelsHit = getTPLevelsHit(trades)
+        const exitType = getExitType(trades)
+        const duration = getTradeDuration(trades)
+
+        // Sort trades chronologically for display
+        const sortedTrades = [...trades].sort((a, b) =>
           new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-        )[0]
-        const latestTrade = [...trades].sort((a, b) =>
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-        )[0]
+        )
+        const entryTrade = sortedTrades[0]
+        const latestTrade = sortedTrades[sortedTrades.length - 1]
 
         return (
           <Card
@@ -183,7 +310,7 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
               }}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, flexWrap: 'wrap' }}>
                   <IconButton
                     sx={{
                       transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
@@ -215,10 +342,44 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                     </Typography>
                   </Box>
 
+                  {/* Leverage Badge - Task 7.1 */}
+                  {entryMeta.leverage && (
+                    <Tooltip title="Leverage">
+                      <Chip
+                        icon={<LeverageIcon sx={{ fontSize: '0.9rem' }} />}
+                        label={`${entryMeta.leverage}x`}
+                        size="small"
+                        variant="outlined"
+                        sx={{ 
+                          fontWeight: 'bold',
+                          borderColor: 'warning.main',
+                          color: 'warning.main'
+                        }}
+                      />
+                    </Tooltip>
+                  )}
+
+                  {/* Stop Loss Badge - Task 7.1 */}
+                  {entryMeta.stopLoss && (
+                    <Tooltip title="Stop Loss Price">
+                      <Chip
+                        icon={<StopLossShieldIcon sx={{ fontSize: '0.9rem' }} />}
+                        label={`SL: ${parseFloat(entryMeta.stopLoss).toFixed(4)}`}
+                        size="small"
+                        variant="outlined"
+                        sx={{ 
+                          fontWeight: 'bold',
+                          borderColor: 'error.light',
+                          color: 'error.light'
+                        }}
+                      />
+                    </Tooltip>
+                  )}
+
                   {/* Entry → Exit */}
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip
-                      label={`Entry: ${entryTrade?.price || entryTrade?.metadata?.order_price || 'N/A'}`}
+                      label={`Entry: ${entryMeta.entryPrice ? parseFloat(entryMeta.entryPrice).toFixed(4) : 'N/A'}`}
                       size="small"
                       variant="outlined"
                     />
@@ -234,7 +395,7 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                   {pnl !== null && (
                     <Chip
                       icon={pnl >= 0 ? <TrendingUp fontSize="small" /> : <TrendingDown fontSize="small" />}
-                      label={`${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`}
+                      label={formatPnL(pnl)}
                       size="small"
                       sx={{
                         bgcolor: pnl >= 0 ? 'success.dark' : 'error.dark',
@@ -290,27 +451,116 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
             <Collapse in={isExpanded} timeout="auto" unmountOnExit>
               <Divider />
               <CardContent sx={{ bgcolor: 'background.default' }}>
-                <List sx={{ py: 0 }}>
-                  {[...trades]
-                    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-                    .map((trade, index) => {
-                      const actionType = determineActionType(trade)
-                      return (
-                        <ListItem
-                          key={trade.id}
-                          sx={{
-                            position: 'relative',
-                            '&::before': index < trades.length - 1 ? {
-                              content: '""',
-                              position: 'absolute',
-                              left: 19,
-                              top: 48,
-                              bottom: -16,
-                              width: 2,
-                              bgcolor: 'divider'
-                            } : {}
+                {/* Trade Group Summary for Closed Trades - Task 7.4 */}
+                {status === 'CLOSED' && (
+                  <Paper 
+                    elevation={0} 
+                    sx={{ 
+                      p: 2, 
+                      mb: 2, 
+                      bgcolor: pnl >= 0 ? 'success.dark' : 'error.dark',
+                      borderRadius: 2
+                    }}
+                  >
+                    <Typography variant="subtitle2" sx={{ color: 'white', mb: 1, fontWeight: 'bold' }}>
+                      Trade Summary
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {/* Total P&L */}
+                      <Box>
+                        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                          Total P&L
+                        </Typography>
+                        <Typography variant="h6" sx={{ color: 'white', fontWeight: 'bold' }}>
+                          {formatPnL(pnl)}
+                        </Typography>
+                      </Box>
+
+                      {/* Duration */}
+                      {duration && (
+                        <Box>
+                          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                            Duration
+                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            <DurationIcon sx={{ color: 'white', fontSize: '1rem' }} />
+                            <Typography variant="body2" sx={{ color: 'white' }}>
+                              {duration}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      )}
+
+                      {/* TP Levels Hit */}
+                      {tpLevelsHit.length > 0 && (
+                        <Box>
+                          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                            TP Levels Hit
+                          </Typography>
+                          <Box sx={{ display: 'flex', gap: 0.5 }}>
+                            {tpLevelsHit.map(tp => (
+                              <Chip
+                                key={tp}
+                                label={tp}
+                                size="small"
+                                sx={{ 
+                                  bgcolor: 'rgba(255,255,255,0.2)', 
+                                  color: 'white',
+                                  fontWeight: 'bold',
+                                  fontSize: '0.7rem'
+                                }}
+                              />
+                            ))}
+                          </Box>
+                        </Box>
+                      )}
+
+                      {/* Exit Type */}
+                      <Box>
+                        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                          Exit Type
+                        </Typography>
+                        <Chip
+                          label={exitType}
+                          size="small"
+                          sx={{ 
+                            bgcolor: exitType === 'SL' ? 'error.light' : 
+                                     exitType === 'TP' ? 'success.light' : 'grey.500',
+                            color: 'white',
+                            fontWeight: 'bold'
                           }}
-                        >
+                        />
+                      </Box>
+                    </Box>
+                  </Paper>
+                )}
+
+                <List sx={{ py: 0 }}>
+                  {sortedTrades.map((trade, index) => {
+                    const actionType = determineActionType(trade)
+                    const isEntry = actionType === 'Entry'
+                    const positionProgress = getPositionProgress(trade, entryMeta.entryQuantity)
+                    const hasIndividualPnL = trade.realized_pnl_percent !== null && trade.realized_pnl_percent !== undefined
+
+                    return (
+                      <ListItem
+                        key={trade.id}
+                        sx={{
+                          position: 'relative',
+                          flexDirection: 'column',
+                          alignItems: 'stretch',
+                          '&::before': index < trades.length - 1 ? {
+                            content: '""',
+                            position: 'absolute',
+                            left: 19,
+                            top: 48,
+                            bottom: -16,
+                            width: 2,
+                            bgcolor: 'divider'
+                          } : {}
+                        }}
+                      >
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start' }}>
                           <Avatar
                             sx={{
                               bgcolor: 'background.paper',
@@ -325,7 +575,7 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                           </Avatar>
 
                           <Box sx={{ flex: 1 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}>
                               <Chip
                                 label={actionType}
                                 size="small"
@@ -345,7 +595,40 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                                 size="small"
                                 variant="outlined"
                               />
-                              {trade.leverage && (
+
+                              {/* Individual P&L for exits - Task 7.3 */}
+                              {!isEntry && hasIndividualPnL && (
+                                <Chip
+                                  icon={trade.realized_pnl_percent >= 0 ? 
+                                    <TrendingUp sx={{ fontSize: '0.9rem' }} /> : 
+                                    <TrendingDown sx={{ fontSize: '0.9rem' }} />
+                                  }
+                                  label={formatPnL(trade.realized_pnl_percent)}
+                                  size="small"
+                                  sx={{
+                                    bgcolor: trade.realized_pnl_percent >= 0 ? 'success.main' : 'error.main',
+                                    color: 'white',
+                                    fontWeight: 'bold',
+                                    fontSize: '0.7rem'
+                                  }}
+                                />
+                              )}
+
+                              {/* Absolute P&L if available */}
+                              {!isEntry && trade.realized_pnl_absolute !== null && trade.realized_pnl_absolute !== undefined && (
+                                <Typography 
+                                  variant="caption" 
+                                  sx={{ 
+                                    color: trade.realized_pnl_absolute >= 0 ? 'success.main' : 'error.main',
+                                    fontWeight: 'bold'
+                                  }}
+                                >
+                                  (${trade.realized_pnl_absolute >= 0 ? '+' : ''}{trade.realized_pnl_absolute.toFixed(2)})
+                                </Typography>
+                              )}
+
+                              {/* Leverage on entry */}
+                              {isEntry && trade.leverage && (
                                 <Chip
                                   label={`${trade.leverage}x`}
                                   size="small"
@@ -354,6 +637,39 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                                 />
                               )}
                             </Box>
+
+                            {/* Position Size After - Task 7.2 */}
+                            {!isEntry && trade.position_size_after !== null && trade.position_size_after !== undefined && (
+                              <Box sx={{ mt: 1, mb: 0.5 }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                                  <Typography variant="caption" color="text.secondary">
+                                    Remaining Position:
+                                  </Typography>
+                                  <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
+                                    {trade.position_size_after.toFixed(3)}
+                                  </Typography>
+                                  {entryMeta.entryQuantity && (
+                                    <Typography variant="caption" color="text.disabled">
+                                      ({(100 - positionProgress).toFixed(1)}% left)
+                                    </Typography>
+                                  )}
+                                </Box>
+                                {/* Progress bar showing position reduction */}
+                                <LinearProgress
+                                  variant="determinate"
+                                  value={positionProgress}
+                                  sx={{
+                                    height: 6,
+                                    borderRadius: 3,
+                                    bgcolor: 'grey.800',
+                                    '& .MuiLinearProgress-bar': {
+                                      bgcolor: positionProgress >= 100 ? 'success.main' : 'warning.main',
+                                      borderRadius: 3
+                                    }
+                                  }}
+                                />
+                              </Box>
+                            )}
 
                             <Typography variant="caption" color="text.secondary">
                               {format(new Date(trade.timestamp), 'MMM dd, yyyy HH:mm:ss')}
@@ -367,9 +683,10 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                               </Typography>
                             )}
                           </Box>
-                        </ListItem>
-                      )
-                    })}
+                        </Box>
+                      </ListItem>
+                    )
+                  })}
                 </List>
               </CardContent>
             </Collapse>

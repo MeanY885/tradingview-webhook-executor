@@ -10,3 +10,5 @@ requests==2.31.0
 gunicorn==21.2.0
 eventlet==0.33.3
 python-dotenv==1.0.0
+hypothesis==6.92.1
+pytest==7.4.3
