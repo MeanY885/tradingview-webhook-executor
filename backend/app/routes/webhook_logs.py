@@ -154,7 +154,11 @@ def reprocess_webhook_log(log_id):
         log.symbol = params['symbol']
         log.original_symbol = original_symbol
         log.action = params['action']
-        log.order_type = params['order_type']
+        # Sanitize order_type - if it's a TradingView placeholder, default to 'market'
+        order_type = params['order_type']
+        if order_type and (order_type.startswith('{{') or len(order_type) > 20):
+            order_type = 'market'
+        log.order_type = order_type
         log.quantity = params['quantity']
         log.price = params.get('price')
         log.stop_loss = normalized.stop_loss_price or params.get('stop_loss')
@@ -285,7 +289,11 @@ def reprocess_all_parse_errors():
             log.symbol = params['symbol']
             log.original_symbol = original_symbol
             log.action = params['action']
-            log.order_type = params['order_type']
+            # Sanitize order_type - if it's a TradingView placeholder, default to 'market'
+            order_type = params['order_type']
+            if order_type and (order_type.startswith('{{') or len(order_type) > 20):
+                order_type = 'market'
+            log.order_type = order_type
             log.quantity = params['quantity']
             log.price = params.get('price')
             log.stop_loss = normalized.stop_loss_price or params.get('stop_loss')
