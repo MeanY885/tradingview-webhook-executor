@@ -1,14 +1,16 @@
 import React, { useState } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
-  Button, Box, Typography, Chip, Divider, Paper, IconButton, Tooltip
+  Button, Box, Typography, Chip, Divider, Paper, IconButton, Tooltip, Alert
 } from '@mui/material'
-import { Delete as DeleteIcon } from '@mui/icons-material'
+import { Delete as DeleteIcon, Refresh as RefreshIcon } from '@mui/icons-material'
 import { format } from 'date-fns'
 import api from '../../services/api'
 
-const WebhookDetailModal = ({ webhook, open, onClose, onDelete }) => {
+const WebhookDetailModal = ({ webhook, open, onClose, onDelete, onReprocess }) => {
   const [deleting, setDeleting] = useState(false)
+  const [reprocessing, setReprocessing] = useState(false)
+  const [reprocessResult, setReprocessResult] = useState(null)
 
   if (!webhook) return null
 
@@ -29,6 +31,26 @@ const WebhookDetailModal = ({ webhook, open, onClose, onDelete }) => {
       alert('Failed to delete webhook log')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const handleReprocess = async () => {
+    setReprocessing(true)
+    setReprocessResult(null)
+    try {
+      const response = await api.post(`/api/webhook-logs/${webhook.id}/reprocess`)
+      setReprocessResult({ success: true, message: response.data.message })
+      if (onReprocess) {
+        onReprocess(response.data.log)
+      }
+    } catch (error) {
+      console.error('Error reprocessing webhook:', error)
+      setReprocessResult({
+        success: false,
+        message: error.response?.data?.error || 'Failed to reprocess webhook'
+      })
+    } finally {
+      setReprocessing(false)
     }
   }
 
@@ -183,6 +205,13 @@ const WebhookDetailModal = ({ webhook, open, onClose, onDelete }) => {
 
         <Divider sx={{ my: 2 }} />
 
+        {/* Reprocess Result */}
+        {reprocessResult && (
+          <Alert severity={reprocessResult.success ? 'success' : 'error'} sx={{ mb: 2 }}>
+            {reprocessResult.message}
+          </Alert>
+        )}
+
         {/* Error Message */}
         {webhook.error_message && (
           <>
@@ -214,14 +243,27 @@ const WebhookDetailModal = ({ webhook, open, onClose, onDelete }) => {
 
       <DialogActions>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-          <Button
-            onClick={handleDelete}
-            color="error"
-            startIcon={<DeleteIcon />}
-            disabled={deleting}
-          >
-            {deleting ? 'Deleting...' : 'Delete'}
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              onClick={handleDelete}
+              color="error"
+              startIcon={<DeleteIcon />}
+              disabled={deleting || reprocessing}
+            >
+              {deleting ? 'Deleting...' : 'Delete'}
+            </Button>
+            {(webhook.status === 'parse_error' || webhook.status === 'invalid') && (
+              <Button
+                onClick={handleReprocess}
+                color="primary"
+                variant="outlined"
+                startIcon={<RefreshIcon />}
+                disabled={deleting || reprocessing}
+              >
+                {reprocessing ? 'Reprocessing...' : 'Reprocess'}
+              </Button>
+            )}
+          </Box>
           <Button onClick={onClose}>Close</Button>
         </Box>
       </DialogActions>

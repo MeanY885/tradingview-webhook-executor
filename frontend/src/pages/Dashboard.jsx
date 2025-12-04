@@ -69,6 +69,15 @@ const Dashboard = () => {
     fetchStats()
   }
 
+  const handleWebhookUpdated = (updatedWebhook) => {
+    // Update the webhook in the local state
+    setRecentWebhooks(prev => prev.map(webhook =>
+      webhook.id === updatedWebhook.id ? updatedWebhook : webhook
+    ))
+    // Refresh stats
+    fetchStats()
+  }
+
   return (
     <Box>
       <Typography variant="h4" gutterBottom>
@@ -107,12 +116,14 @@ const Dashboard = () => {
               <TradeGroupsView
                 webhooks={recentWebhooks}
                 onWebhookDeleted={handleWebhookDeleted}
+                onWebhookUpdated={handleWebhookUpdated}
               />
             ) : (
               <RealTimeWebhookFeed
                 webhooks={recentWebhooks}
                 loading={loading}
                 onWebhookDeleted={handleWebhookDeleted}
+                onWebhookUpdated={handleWebhookUpdated}
               />
             )}
           </Paper>
