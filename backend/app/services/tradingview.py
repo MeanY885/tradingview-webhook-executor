@@ -62,6 +62,7 @@ class TradingViewAlertParser:
         - Double commas: "key": "value",,
         - Unescaped quotes in strings
         - Missing closing braces
+        - Double quotes at start of string values: ""value"
         """
         if not raw_message or not raw_message.strip().startswith('{'):
             return None
@@ -79,6 +80,10 @@ class TradingViewAlertParser:
         # Fix ",", pattern (extra quote-comma-quote)
         cleaned = re.sub(r'",\s*",', '",', cleaned)
         
+        # Fix "": "" pattern where value starts with double quote (e.g., ""margin_mode")
+        # This pattern: ": ""key" -> ": "key"
+        cleaned = re.sub(r':\s*""([^"]+)"', r': "\1"', cleaned)
+        
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
@@ -88,26 +93,29 @@ class TradingViewAlertParser:
         try:
             result = {}
             # Match "key": "value" or "key": number patterns
-            pattern = r'"([^"]+)"\s*:\s*(?:"([^"]*)"|([\d.]+|true|false|null))'
-            matches = re.findall(pattern, cleaned, re.IGNORECASE)
-            for key, str_val, other_val in matches:
-                if str_val:
-                    result[key] = str_val
-                elif other_val:
-                    val = other_val.lower()
-                    if val == 'true':
-                        result[key] = True
-                    elif val == 'false':
-                        result[key] = False
-                    elif val == 'null':
-                        result[key] = None
-                    else:
-                        try:
-                            result[key] = float(other_val) if '.' in other_val else int(other_val)
-                        except ValueError:
-                            result[key] = other_val
+            # Also handle cases where value might have leading double quotes
+            pattern = r'"([^"]+)"\s*:\s*"*([^",}\]]+)"*'
+            matches = re.findall(pattern, cleaned)
+            for key, value in matches:
+                value = value.strip().strip('"')
+                if not value or value.startswith('{{'):
+                    continue
+                # Try to convert to appropriate type
+                val_lower = value.lower()
+                if val_lower == 'true':
+                    result[key] = True
+                elif val_lower == 'false':
+                    result[key] = False
+                elif val_lower == 'null':
+                    result[key] = None
+                else:
+                    try:
+                        result[key] = float(value) if '.' in value else int(value)
+                    except ValueError:
+                        result[key] = value
             
             if result:
+                logger.debug(f"Manual extraction found keys: {list(result.keys())}")
                 return result
         except Exception as e:
             logger.debug(f"Manual JSON extraction failed: {e}")
