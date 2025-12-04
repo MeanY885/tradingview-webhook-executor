@@ -14,14 +14,15 @@ git pull origin main
 echo "🛑 Stopping containers..."
 docker-compose down
 
-# Remove old frontend image and clear cache
-echo "🗑️  Removing old frontend image and clearing cache..."
+# Remove old images and clear cache
+echo "🗑️  Removing old images and clearing cache..."
 docker rmi tradingview-webhook-executor-frontend 2>/dev/null || true
+docker rmi tradingview-webhook-executor-backend 2>/dev/null || true
 docker builder prune -f
 
 # Rebuild and start
 echo "🔨 Rebuilding services..."
-docker-compose build --no-cache frontend
+docker-compose build --no-cache frontend backend
 docker-compose up -d
 
 # Wait and show status
