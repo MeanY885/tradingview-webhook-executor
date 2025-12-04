@@ -9,7 +9,7 @@ from app.services.tradingview import TradingViewAlertParser
 from app.services.symbol_converter import SymbolConverter
 from app.services.webhook_normalizer import WebhookNormalizer
 from app.services.trade_grouping import TradeGroupingService
-from app.services.pnl_calculator import PnLCalculator, AlertType
+from app.services.pnl_calculator import PnLCalculator
 from sqlalchemy import desc, func
 
 logger = logging.getLogger(__name__)

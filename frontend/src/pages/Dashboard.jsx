@@ -78,6 +78,12 @@ const Dashboard = () => {
     fetchStats()
   }
 
+  const handleRefresh = () => {
+    // Full refresh of logs and stats
+    fetchRecentLogs()
+    fetchStats()
+  }
+
   return (
     <Box>
       <Typography variant="h4" gutterBottom>
@@ -116,7 +122,7 @@ const Dashboard = () => {
               <TradeGroupsView
                 webhooks={recentWebhooks}
                 onWebhookDeleted={handleWebhookDeleted}
-                onWebhookUpdated={handleWebhookUpdated}
+                onRefresh={handleRefresh}
               />
             ) : (
               <RealTimeWebhookFeed

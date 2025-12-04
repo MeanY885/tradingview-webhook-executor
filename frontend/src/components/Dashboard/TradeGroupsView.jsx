@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react'
 import {
   Box, Card, CardContent, Collapse, Typography, IconButton,
   Chip, Divider, List, ListItem, Avatar, Tooltip, Stack,
-  LinearProgress, Paper
+  LinearProgress, Paper, Button, CircularProgress
 } from '@mui/material'
 import {
   ExpandMore as ExpandMoreIcon,
@@ -16,15 +16,17 @@ import {
   Delete as DeleteIcon,
   Speed as LeverageIcon,
   Shield as StopLossShieldIcon,
-  Timer as DurationIcon
+  Timer as DurationIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material'
 import { format, formatDistanceStrict } from 'date-fns'
 import api from '../../services/api'
 import TPCheckboxes from './TPCheckboxes'
 import SLTPChangeIndicator from './SLTPChangeIndicator'
 
-const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
+const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
   const [expandedGroups, setExpandedGroups] = useState({})
+  const [reprocessing, setReprocessing] = useState(false)
 
   // Group webhooks by trade_group_id
   const groupedTrades = useMemo(() => {
@@ -268,6 +270,41 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
     }
   }
 
+  const handleReprocessSingle = async (e, trade) => {
+    e.stopPropagation()
+    setReprocessing(true)
+    try {
+      await api.post(`/api/webhook-logs/${trade.id}/reprocess`)
+      if (onRefresh) {
+        onRefresh()
+      }
+    } catch (error) {
+      console.error('Error reprocessing webhook:', error)
+      alert(error.response?.data?.error || 'Failed to reprocess webhook')
+    } finally {
+      setReprocessing(false)
+    }
+  }
+
+  const handleReprocessAllErrors = async () => {
+    setReprocessing(true)
+    try {
+      const response = await api.post('/api/webhook-logs/reprocess-all-errors')
+      alert(`Reprocessed ${response.data.succeeded} of ${response.data.total} webhooks`)
+      if (onRefresh) {
+        onRefresh()
+      }
+    } catch (error) {
+      console.error('Error reprocessing all errors:', error)
+      alert(error.response?.data?.error || 'Failed to reprocess webhooks')
+    } finally {
+      setReprocessing(false)
+    }
+  }
+
+  // Check if there are any parse errors
+  const hasParseErrors = webhooks.some(w => w.status === 'parse_error' || w.status === 'invalid')
+
   // Format P&L display
   const formatPnL = (pnl, showSign = true) => {
     if (pnl === null || pnl === undefined) return 'N/A'
@@ -285,6 +322,21 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
 
   return (
     <Stack spacing={2}>
+      {/* Reprocess All Errors Button */}
+      {hasParseErrors && (
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+          <Button
+            variant="outlined"
+            color="warning"
+            size="small"
+            startIcon={reprocessing ? <CircularProgress size={16} /> : <RefreshIcon />}
+            onClick={handleReprocessAllErrors}
+            disabled={reprocessing}
+          >
+            {reprocessing ? 'Reprocessing...' : 'Reprocess All Errors'}
+          </Button>
+        </Box>
+      )}
       {sortedGroups.map(([groupId, trades]) => {
         const isExpanded = expandedGroups[groupId]
         const direction = trades[0]?.trade_direction
@@ -704,9 +756,23 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted }) => {
                             </Typography>
 
                             {trade.error_message && (
-                              <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>
-                                ⚠️ {trade.error_message}
-                              </Typography>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                                <Typography variant="caption" color="error">
+                                  ⚠️ {trade.error_message}
+                                </Typography>
+                                {(trade.status === 'parse_error' || trade.status === 'invalid') && (
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    color="warning"
+                                    onClick={(e) => handleReprocessSingle(e, trade)}
+                                    disabled={reprocessing}
+                                    sx={{ fontSize: '0.65rem', py: 0, minHeight: 20 }}
+                                  >
+                                    Reprocess
+                                  </Button>
+                                )}
+                              </Box>
                             )}
                           </Box>
                         </Box>
