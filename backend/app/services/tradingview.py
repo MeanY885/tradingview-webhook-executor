@@ -243,8 +243,38 @@ class TradingViewAlertParser:
         # ============================================================
         # INDICATOR FALLBACK LOGIC
         # When strategy placeholders aren't populated (indicators don't have access to {{strategy.*}}),
-        # try to infer trade data from plot values and other available fields.
+        # try to infer trade data from signal_type field or plot values.
         # ============================================================
+        
+        # First check for explicit signal_type field (for indicator-based alerts)
+        signal_type = str(data.get('signal_type', '') or alert_message_params.get('signal_type', '')).lower()
+        
+        if signal_type:
+            logger.info(f"Found signal_type={signal_type} for {symbol}")
+            
+            # Map signal_type to action
+            if signal_type in ['bull_entry', 'bull', 'long', 'buy']:
+                action = 'buy'
+                order_type = 'enter_long'
+                logger.info(f"Mapped signal_type={signal_type} to buy/long entry")
+            elif signal_type in ['bear_entry', 'bear', 'short', 'sell']:
+                action = 'sell'
+                order_type = 'enter_short'
+                logger.info(f"Mapped signal_type={signal_type} to sell/short entry")
+            elif signal_type in ['tp1', 'tp2', 'tp3', 'tp4', 'tp5']:
+                # For TP signals, infer action from existing position (opposite of entry)
+                # Default to buy (closing a short) - will be refined by trade grouping
+                action = 'buy'
+                order_type = 'reduce'
+                logger.info(f"Mapped signal_type={signal_type} to take profit")
+            elif signal_type in ['stop_loss', 'sl', 'stoploss']:
+                action = 'buy'  # Default, will be refined
+                order_type = 'exit'
+                logger.info(f"Mapped signal_type={signal_type} to stop loss")
+            elif signal_type in ['exit', 'close', 'flat']:
+                action = 'buy'  # Default, will be refined
+                order_type = 'exit'
+                logger.info(f"Mapped signal_type={signal_type} to exit")
         
         # Extract plot values for indicator-based alerts
         plot_values = {}
@@ -255,11 +285,11 @@ class TradingViewAlertParser:
                 except (ValueError, TypeError):
                     pass
         
-        # Check if this looks like an unpopulated indicator alert
+        # Check if this looks like an unpopulated indicator alert (and no signal_type)
         is_indicator_alert = (not action or action.startswith('{{')) and symbol and plot_values
         
         if is_indicator_alert:
-            logger.info(f"Detected indicator-based alert for {symbol}, attempting to infer trade data")
+            logger.info(f"Detected indicator-based alert for {symbol}, attempting to infer trade data from plots")
             
             # Try to infer action from plot_0 (common pattern: 1=long, -1=short, 0=flat)
             plot_0 = plot_values.get('plot_0')

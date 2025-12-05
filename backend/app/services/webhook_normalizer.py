@@ -401,8 +401,52 @@ class WebhookNormalizer:
         # ============================================================
         # INDICATOR FALLBACK LOGIC
         # When strategy placeholders aren't populated (indicators don't have access to {{strategy.*}}),
-        # try to infer trade data from plot values and other available fields.
+        # try to infer trade data from signal_type field or plot values.
         # ============================================================
+        
+        # First check for explicit signal_type field (for indicator-based alerts)
+        signal_type = str(raw_payload.get('signal_type', '') or alert_params.get('signal_type', '')).lower()
+        
+        if signal_type:
+            logger.info(f"Found signal_type={signal_type} for {symbol}")
+            
+            # Map signal_type to action and alert_type
+            if signal_type in ['bull_entry', 'bull', 'long', 'buy']:
+                action = 'buy'
+                order_type = 'enter_long'
+                alert_type = AlertType.ENTRY.value
+                market_position = 'long'
+                logger.info(f"Mapped signal_type={signal_type} to buy/long entry")
+            elif signal_type in ['bear_entry', 'bear', 'short', 'sell']:
+                action = 'sell'
+                order_type = 'enter_short'
+                alert_type = AlertType.ENTRY.value
+                market_position = 'short'
+                logger.info(f"Mapped signal_type={signal_type} to sell/short entry")
+            elif signal_type == 'tp1':
+                alert_type = AlertType.TP1.value
+                order_type = 'reduce'
+                logger.info(f"Mapped signal_type={signal_type} to TP1")
+            elif signal_type == 'tp2':
+                alert_type = AlertType.TP2.value
+                order_type = 'reduce'
+                logger.info(f"Mapped signal_type={signal_type} to TP2")
+            elif signal_type == 'tp3':
+                alert_type = AlertType.TP3.value
+                order_type = 'reduce'
+                logger.info(f"Mapped signal_type={signal_type} to TP3")
+            elif signal_type in ['tp4', 'tp5']:
+                alert_type = AlertType.PARTIAL.value
+                order_type = 'reduce'
+                logger.info(f"Mapped signal_type={signal_type} to PARTIAL")
+            elif signal_type in ['stop_loss', 'sl', 'stoploss']:
+                alert_type = AlertType.STOP_LOSS.value
+                order_type = 'exit'
+                logger.info(f"Mapped signal_type={signal_type} to STOP_LOSS")
+            elif signal_type in ['exit', 'close', 'flat']:
+                alert_type = AlertType.EXIT.value
+                order_type = 'exit'
+                logger.info(f"Mapped signal_type={signal_type} to EXIT")
         
         # Check if this looks like an unpopulated indicator alert
         # (action is empty or still a placeholder, but we have plot values)
@@ -413,7 +457,7 @@ class WebhookNormalizer:
         )
         
         if is_indicator_alert:
-            logger.info(f"Detected indicator-based alert for {symbol}, attempting to infer trade data")
+            logger.info(f"Detected indicator-based alert for {symbol}, attempting to infer trade data from plots")
             
             # Try to infer action from plot_0 (common pattern: 1=long, -1=short, 0=flat)
             plot_0 = plot_values.get('plot_0')
