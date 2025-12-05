@@ -252,17 +252,15 @@ const WebhookDetailModal = ({ webhook, open, onClose, onDelete, onReprocess }) =
             >
               {deleting ? 'Deleting...' : 'Delete'}
             </Button>
-            {(webhook.status === 'parse_error' || webhook.status === 'invalid') && (
-              <Button
-                onClick={handleReprocess}
-                color="primary"
-                variant="outlined"
-                startIcon={<RefreshIcon />}
-                disabled={deleting || reprocessing}
-              >
-                {reprocessing ? 'Reprocessing...' : 'Reprocess'}
-              </Button>
-            )}
+            <Button
+              onClick={handleReprocess}
+              color="primary"
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              disabled={deleting || reprocessing}
+            >
+              {reprocessing ? 'Reprocessing...' : 'Reprocess'}
+            </Button>
           </Box>
           <Button onClick={onClose}>Close</Button>
         </Box>
