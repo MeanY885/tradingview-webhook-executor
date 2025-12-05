@@ -398,6 +398,71 @@ class WebhookNormalizer:
             order_type, order_comment, order_id
         )
         
+        # ============================================================
+        # INDICATOR FALLBACK LOGIC
+        # When strategy placeholders aren't populated (indicators don't have access to {{strategy.*}}),
+        # try to infer trade data from plot values and other available fields.
+        # ============================================================
+        
+        # Check if this looks like an unpopulated indicator alert
+        # (action is empty or still a placeholder, but we have plot values)
+        is_indicator_alert = (
+            (not action or action.startswith('{{')) and 
+            plot_values and 
+            symbol
+        )
+        
+        if is_indicator_alert:
+            logger.info(f"Detected indicator-based alert for {symbol}, attempting to infer trade data")
+            
+            # Try to infer action from plot_0 (common pattern: 1=long, -1=short, 0=flat)
+            plot_0 = plot_values.get('plot_0')
+            if plot_0 is not None and not action:
+                if plot_0 == 1 or plot_0 == 1.0:
+                    action = 'buy'
+                    if not order_type:
+                        order_type = 'enter_long'
+                    if not alert_type or alert_type == AlertType.UNKNOWN.value:
+                        alert_type = AlertType.ENTRY.value
+                    logger.info(f"Inferred action=buy from plot_0={plot_0}")
+                elif plot_0 == -1 or plot_0 == -1.0:
+                    action = 'sell'
+                    if not order_type:
+                        order_type = 'enter_short'
+                    if not alert_type or alert_type == AlertType.UNKNOWN.value:
+                        alert_type = AlertType.ENTRY.value
+                    logger.info(f"Inferred action=sell from plot_0={plot_0}")
+                elif plot_0 == 0 or plot_0 == 0.0:
+                    # Could be exit/close signal
+                    if not alert_type or alert_type == AlertType.UNKNOWN.value:
+                        alert_type = AlertType.EXIT.value
+                    logger.info(f"Inferred exit signal from plot_0={plot_0}")
+            
+            # Try to use plot_1 as entry price if order_price not set
+            plot_1 = plot_values.get('plot_1')
+            if plot_1 is not None and order_price is None:
+                order_price = plot_1
+                logger.info(f"Using plot_1={plot_1} as order_price")
+            
+            # Fallback to close price if still no order_price
+            if order_price is None:
+                close_price = WebhookNormalizer._parse_float(raw_payload.get('close'))
+                if close_price is not None:
+                    order_price = close_price
+                    logger.info(f"Using close={close_price} as order_price")
+            
+            # Try to use plot_2 as take_profit if available and not set
+            plot_2 = plot_values.get('plot_2')
+            if plot_2 is not None and take_profit_price is None:
+                take_profit_price = plot_2
+                logger.info(f"Using plot_2={plot_2} as take_profit_price")
+            
+            # Try to use plot_3 as stop_loss if available and not set
+            plot_3 = plot_values.get('plot_3')
+            if plot_3 is not None and stop_loss_price is None:
+                stop_loss_price = plot_3
+                logger.info(f"Using plot_3={plot_3} as stop_loss_price")
+        
         return NormalizedWebhook(
             symbol=symbol,
             action=action,

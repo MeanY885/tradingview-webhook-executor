@@ -240,6 +240,70 @@ class TradingViewAlertParser:
             except (ValueError, TypeError) as e:
                 logger.warning(f"Invalid trailing_stop_pct value '{data['trailing_stop_pct']}': {e}")
 
+        # ============================================================
+        # INDICATOR FALLBACK LOGIC
+        # When strategy placeholders aren't populated (indicators don't have access to {{strategy.*}}),
+        # try to infer trade data from plot values and other available fields.
+        # ============================================================
+        
+        # Extract plot values for indicator-based alerts
+        plot_values = {}
+        for key, value in data.items():
+            if key.startswith('plot_') and len(key) > 5:
+                try:
+                    plot_values[key] = float(value) if value and not str(value).startswith('{{') else None
+                except (ValueError, TypeError):
+                    pass
+        
+        # Check if this looks like an unpopulated indicator alert
+        is_indicator_alert = (not action or action.startswith('{{')) and symbol and plot_values
+        
+        if is_indicator_alert:
+            logger.info(f"Detected indicator-based alert for {symbol}, attempting to infer trade data")
+            
+            # Try to infer action from plot_0 (common pattern: 1=long, -1=short, 0=flat)
+            plot_0 = plot_values.get('plot_0')
+            if plot_0 is not None:
+                if plot_0 == 1 or plot_0 == 1.0:
+                    action = 'buy'
+                    logger.info(f"Inferred action=buy from plot_0={plot_0}")
+                elif plot_0 == -1 or plot_0 == -1.0:
+                    action = 'sell'
+                    logger.info(f"Inferred action=sell from plot_0={plot_0}")
+            
+            # Try to use plot_1 as price if not set
+            plot_1 = plot_values.get('plot_1')
+            if plot_1 is not None and price is None:
+                price = plot_1
+                logger.info(f"Using plot_1={plot_1} as price")
+            
+            # Fallback to close price if still no price
+            if price is None:
+                try:
+                    close_val = data.get('close')
+                    if close_val and not str(close_val).startswith('{{'):
+                        price = float(close_val)
+                        logger.info(f"Using close={price} as price")
+                except (ValueError, TypeError):
+                    pass
+            
+            # Try to use plot_2 as take_profit if available
+            plot_2 = plot_values.get('plot_2')
+            if plot_2 is not None and take_profit is None:
+                take_profit = plot_2
+                logger.info(f"Using plot_2={plot_2} as take_profit")
+            
+            # Try to use plot_3 as stop_loss if available
+            plot_3 = plot_values.get('plot_3')
+            if plot_3 is not None and stop_loss is None:
+                stop_loss = plot_3
+                logger.info(f"Using plot_3={plot_3} as stop_loss")
+            
+            # Default quantity for indicators (user can configure this)
+            if quantity <= 0:
+                quantity = 1  # Default to 1 unit for indicators
+                logger.info(f"Using default quantity=1 for indicator alert")
+
         return {
             'symbol': symbol,
             'action': action,
