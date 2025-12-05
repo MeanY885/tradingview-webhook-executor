@@ -298,6 +298,14 @@ class TradingViewAlertParser:
         if cleaned.endswith('",') or cleaned.endswith('"'):
             cleaned = cleaned.rstrip('",')
 
+        # Handle double quotes at start (e.g., ""margin_mode" -> "margin_mode")
+        while cleaned.startswith('""'):
+            cleaned = cleaned[1:]
+
+        # Handle case where string starts with "key": (missing opening brace)
+        if re.match(r'^"[^"]+"\s*:', cleaned):
+            cleaned = '{' + cleaned
+
         # Add braces if missing
         if not cleaned.startswith('{'):
             cleaned = '{' + cleaned

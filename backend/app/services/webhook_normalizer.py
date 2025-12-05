@@ -127,9 +127,14 @@ class WebhookNormalizer:
         if cleaned.endswith('",') or (cleaned.endswith('"') and not cleaned.endswith('}"')):
             cleaned = cleaned.rstrip('",')
         
-        # Handle double quotes at start
+        # Handle double quotes at start (e.g., ""margin_mode" -> "margin_mode")
         while cleaned.startswith('""'):
             cleaned = cleaned[1:]
+        
+        # Handle case where string starts with "key": (missing opening brace)
+        # Pattern: starts with "word": which indicates a JSON key-value pair
+        if re.match(r'^"[^"]+"\s*:', cleaned):
+            cleaned = '{' + cleaned
         
         # Add braces if missing
         if not cleaned.startswith('{'):
