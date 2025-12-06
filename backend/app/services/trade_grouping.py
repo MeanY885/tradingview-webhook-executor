@@ -81,6 +81,7 @@ class TradeGroupingService:
         if alert_type == AlertType.ENTRY.value:
             is_entry = True
         elif alert_type in [AlertType.TP1.value, AlertType.TP2.value, AlertType.TP3.value,
+                           AlertType.TP4.value, AlertType.TP5.value,
                            AlertType.STOP_LOSS.value, AlertType.PARTIAL.value, AlertType.EXIT.value]:
             is_exit = True
         
@@ -126,14 +127,32 @@ class TradeGroupingService:
             # We need to find a group whose current position matches what we expect
             position_size_hint = normalized.position_size
             timestamp_hint = normalized.timestamp
-            
-            trade_group_id = TradeGroupingService._find_active_trade_group(
-                user_id, symbol, trade_direction,
-                position_size_hint=position_size_hint,
-                timestamp_hint=timestamp_hint
-            )
+
+            trade_group_id = None
             entry_price = None
-            
+
+            # If direction is known, try to find by direction
+            if trade_direction:
+                trade_group_id = TradeGroupingService._find_active_trade_group(
+                    user_id, symbol, trade_direction,
+                    position_size_hint=position_size_hint,
+                    timestamp_hint=timestamp_hint
+                )
+
+            # If direction unknown or no group found, try to find ANY active group for this symbol
+            # This handles the case where only one position is open per symbol at a time
+            if not trade_group_id:
+                for direction in ['long', 'short']:
+                    trade_group_id = TradeGroupingService._find_active_trade_group(
+                        user_id, symbol, direction,
+                        position_size_hint=position_size_hint,
+                        timestamp_hint=timestamp_hint
+                    )
+                    if trade_group_id:
+                        trade_direction = direction  # Inherit direction from found group
+                        logger.info(f"Found active {direction} group for {symbol} exit signal")
+                        break
+
             if trade_group_id:
                 # Look up entry price from the group's entry webhook
                 entry_price = TradeGroupingService._get_group_entry_price(trade_group_id)
@@ -141,9 +160,11 @@ class TradeGroupingService:
             else:
                 # No active group found - this might be an orphaned exit
                 # Create a new group anyway for tracking
+                if not trade_direction:
+                    trade_direction = 'long'  # Default fallback
                 trade_group_id = TradeGroupingService._generate_trade_group_id(user_id, symbol, trade_direction)
                 logger.warning(f"No active trade group found for {symbol} {trade_direction}, creating orphaned group: {trade_group_id}")
-            
+
             return TradeGroupResult(
                 trade_group_id=trade_group_id,
                 trade_direction=trade_direction,
