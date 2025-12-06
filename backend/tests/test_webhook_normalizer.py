@@ -881,3 +881,237 @@ class TestTypeCoercion:
         assert isinstance(normalized.position_size, float)
         assert normalized.order_contracts == pytest.approx(quantity, rel=1e-4)
         assert normalized.position_size == pytest.approx(quantity, rel=1e-4)
+
+
+class TestTradeAlgoEliteSupport:
+    """Tests for TradeAlgo Elite Indicator/Backtester field parsing.
+    
+    Validates: TradeAlgo Elite integration requirements
+    """
+    
+    def test_tradealgo_indicator_bull_entry(self):
+        """Test parsing TradeAlgo Elite Indicator bull entry signal."""
+        payload = {
+            'symbol': 'EURUSD',
+            'signal_type': 'bull_entry',
+            'entry_price': '1.0850',
+            'stop_loss': '1.0800',
+            'take_profit_1': '1.0880',
+            'take_profit_2': '1.0910',
+            'take_profit_3': '1.0950',
+            'tp_count': '3',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.action == 'buy'
+        assert normalized.order_type == 'enter_long'
+        assert normalized.alert_type == 'ENTRY'
+        assert normalized.market_position == 'long'
+        assert normalized.entry_price == 1.0850
+        assert normalized.stop_loss_price == 1.0800
+        assert normalized.take_profit_1 == 1.0880
+        assert normalized.take_profit_2 == 1.0910
+        assert normalized.take_profit_3 == 1.0950
+        assert normalized.tp_count == 3
+    
+    def test_tradealgo_indicator_bear_entry(self):
+        """Test parsing TradeAlgo Elite Indicator bear entry signal."""
+        payload = {
+            'symbol': 'GBPUSD',
+            'signal_type': 'bear_entry',
+            'entry_price': '1.2650',
+            'stop_loss': '1.2700',
+            'take_profit_1': '1.2620',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.action == 'sell'
+        assert normalized.order_type == 'enter_short'
+        assert normalized.alert_type == 'ENTRY'
+        assert normalized.market_position == 'short'
+        assert normalized.entry_price == 1.2650
+        assert normalized.stop_loss_price == 1.2700
+        assert normalized.take_profit_1 == 1.2620
+    
+    def test_tradealgo_tp_signals(self):
+        """Test parsing TradeAlgo TP hit signals."""
+        for tp_num, expected_alert_type in [(1, 'TP1'), (2, 'TP2'), (3, 'TP3'), (4, 'TP4'), (5, 'TP5')]:
+            payload = {
+                'symbol': 'USDJPY',
+                'signal_type': f'tp{tp_num}',
+                'exit_price': '150.50',
+                'quantity': '2000'
+            }
+            normalized = WebhookNormalizer.normalize(payload)
+            
+            assert normalized.order_type == 'reduce'
+            assert normalized.alert_type == expected_alert_type, \
+                f"Expected {expected_alert_type} for tp{tp_num}, got {normalized.alert_type}"
+    
+    def test_tradealgo_stop_loss_signal(self):
+        """Test parsing TradeAlgo stop loss signal."""
+        payload = {
+            'symbol': 'AUDUSD',
+            'signal_type': 'stop_loss',
+            'exit_price': '0.6500',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.order_type == 'exit'
+        assert normalized.alert_type == 'SL'
+    
+    def test_tradealgo_exit_signal(self):
+        """Test parsing TradeAlgo exit signal."""
+        payload = {
+            'symbol': 'NZDUSD',
+            'signal_type': 'exit',
+            'exit_price': '0.5800',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.order_type == 'exit'
+        assert normalized.alert_type == 'EXIT'
+    
+    def test_tradealgo_backtester_long_entry(self):
+        """Test parsing TradeAlgo Elite Backtester long entry with different field names."""
+        payload = {
+            'symbol': 'EURUSD',
+            'signal_type': 'bull_entry',
+            'Long Entry Price': '1.0850',
+            'Long Stop Price': '1.0800',
+            'Long TP-1 Price': '1.0880',
+            'Long TP-2 Price': '1.0910',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.action == 'buy'
+        assert normalized.order_type == 'enter_long'
+        assert normalized.entry_price == 1.0850
+        assert normalized.stop_loss_price == 1.0800
+        assert normalized.take_profit_1 == 1.0880
+        assert normalized.take_profit_2 == 1.0910
+    
+    def test_tradealgo_backtester_short_entry(self):
+        """Test parsing TradeAlgo Elite Backtester short entry."""
+        payload = {
+            'symbol': 'GBPUSD',
+            'signal_type': 'bear_entry',
+            'Short Entry Price': '1.2650',
+            'Short Stop Price': '1.2700',
+            'Short TP-1 Price': '1.2620',
+            'Short TP-2 Price': '1.2580',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.action == 'sell'
+        assert normalized.order_type == 'enter_short'
+        assert normalized.entry_price == 1.2650
+        assert normalized.stop_loss_price == 1.2700
+        assert normalized.take_profit_1 == 1.2620
+        assert normalized.take_profit_2 == 1.2580
+    
+    def test_tradealgo_indicator_field_names(self):
+        """Test parsing with original TradeAlgo indicator field names."""
+        payload = {
+            'symbol': 'XAUUSD',
+            'signal_type': 'bull_entry',
+            'EntryPrice': '1950.50',
+            'StopLoss': '1940.00',
+            'TakeProfit1': '1960.00',
+            'TakeProfit2': '1970.00',
+            'TakeProfit3': '1980.00',
+            'tpCount': '3',
+            'quantity': '1'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.entry_price == 1950.50
+        assert normalized.stop_loss_price == 1940.00
+        assert normalized.take_profit_1 == 1960.00
+        assert normalized.take_profit_2 == 1970.00
+        assert normalized.take_profit_3 == 1980.00
+        assert normalized.tp_count == 3
+    
+    def test_tradealgo_bull_bear_indicators_bull(self):
+        """Test inference from Bull plot indicator."""
+        payload = {
+            'symbol': 'AUDUSD',
+            'Bull': '1',
+            'Bear': '0',
+            'EntryPrice': '0.6550',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.action == 'buy'
+        assert normalized.order_type == 'enter_long'
+        assert normalized.is_bull == True
+        assert normalized.is_bear == False
+    
+    def test_tradealgo_bull_bear_indicators_bear(self):
+        """Test inference from Bear plot indicator."""
+        payload = {
+            'symbol': 'AUDUSD',
+            'Bull': '0',
+            'Bear': '1',
+            'EntryPrice': '0.6550',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.action == 'sell'
+        assert normalized.order_type == 'enter_short'
+        assert normalized.is_bull == False
+        assert normalized.is_bear == True
+    
+    def test_tradealgo_bull_exit_indicator(self):
+        """Test inference from Bull Exit plot indicator."""
+        payload = {
+            'symbol': 'EURUSD',
+            'Bull Exit': '1',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.order_type == 'exit'
+        assert normalized.alert_type == 'EXIT'
+        assert normalized.is_bull_exit == True
+    
+    def test_tradealgo_technical_indicators(self):
+        """Test extraction of TradeAlgo technical indicator values."""
+        payload = {
+            'symbol': 'EURUSD',
+            'signal_type': 'bull_entry',
+            'entry_price': '1.0850',
+            'stop_loss': '1.0800',
+            'atr_value': '0.00044',
+            'slDistInPips': '40.79740',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        assert normalized.atr_value == pytest.approx(0.00044, rel=1e-4)
+        assert normalized.sl_dist_pips == pytest.approx(40.79740, rel=1e-4)
+    
+    def test_first_tp_used_as_primary_take_profit(self):
+        """Test that take_profit_1 is used as primary take_profit_price if not set."""
+        payload = {
+            'symbol': 'EURUSD',
+            'signal_type': 'bull_entry',
+            'entry_price': '1.0850',
+            'take_profit_1': '1.0900',
+            'take_profit_2': '1.0950',
+            'quantity': '10000'
+        }
+        normalized = WebhookNormalizer.normalize(payload)
+        
+        # take_profit_price should be set to take_profit_1 value
+        assert normalized.take_profit_price == 1.0900
+        assert normalized.take_profit_1 == 1.0900
+        assert normalized.take_profit_2 == 1.0950

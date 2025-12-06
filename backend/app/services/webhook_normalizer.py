@@ -20,6 +20,8 @@ class AlertType(Enum):
     TP1 = "TP1"
     TP2 = "TP2"
     TP3 = "TP3"
+    TP4 = "TP4"
+    TP5 = "TP5"
     STOP_LOSS = "SL"
     PARTIAL = "PARTIAL"
     EXIT = "EXIT"
@@ -71,12 +73,30 @@ class NormalizedWebhook:
     # Custom indicator values (plot_0, plot_1, etc.)
     # Requirements: 2.5
     plot_values: Dict[str, float] = field(default_factory=dict)
-    
+
+    # TradeAlgo Elite multi-TP support
+    take_profit_1: Optional[float] = None
+    take_profit_2: Optional[float] = None
+    take_profit_3: Optional[float] = None
+    take_profit_4: Optional[float] = None
+    take_profit_5: Optional[float] = None
+    tp_count: Optional[int] = None
+
+    # TradeAlgo Elite technical indicators (optional, for logging/analysis)
+    atr_value: Optional[float] = None
+    sl_dist_pips: Optional[float] = None
+
+    # Bull/Bear signal indicators (alternative direction detection)
+    is_bull: Optional[bool] = None
+    is_bear: Optional[bool] = None
+    is_bull_exit: Optional[bool] = None
+    is_bear_exit: Optional[bool] = None
+
     # Metadata
     timestamp: Optional[datetime] = None
     order_id: Optional[str] = None
     order_comment: Optional[str] = None
-    
+
     # Raw data for debugging
     raw_payload: Dict[str, Any] = field(default_factory=dict)
 
@@ -278,6 +298,9 @@ class WebhookNormalizer:
         entry_price = WebhookNormalizer._parse_float(
             WebhookNormalizer._get_first_valid(
                 raw_payload.get('entry_price'),
+                raw_payload.get('EntryPrice'),  # TradeAlgo Elite Indicator
+                raw_payload.get('Long Entry Price'),  # TradeAlgo Elite Backtester
+                raw_payload.get('Short Entry Price'),  # TradeAlgo Elite Backtester
                 raw_payload.get('position_avg_price'),
                 alert_params.get('entry_price')
             )
@@ -328,7 +351,10 @@ class WebhookNormalizer:
             WebhookNormalizer._get_first_valid(
                 alert_params.get('stop_loss_price'),
                 raw_payload.get('stop_loss_price'),
-                raw_payload.get('stop_loss')
+                raw_payload.get('stop_loss'),
+                raw_payload.get('StopLoss'),  # TradeAlgo Elite Indicator
+                raw_payload.get('Long Stop Price'),  # TradeAlgo Elite Backtester
+                raw_payload.get('Short Stop Price')  # TradeAlgo Elite Backtester
             )
         )
         # If no explicit stop_loss_price, use exit_stop
@@ -347,7 +373,116 @@ class WebhookNormalizer:
         # If no explicit take_profit_price, use exit_limit
         if take_profit_price is None and exit_limit is not None:
             take_profit_price = exit_limit
-        
+
+        # ============================================================
+        # TRADEALGO ELITE MULTI-TP EXTRACTION
+        # Extract individual take profit levels (TP1-TP5) for TradeAlgo Elite
+        # ============================================================
+        take_profit_1 = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('take_profit_1'),
+                raw_payload.get('TakeProfit1'),  # TradeAlgo Elite Indicator
+                raw_payload.get('Long TP-1 Price'),  # TradeAlgo Elite Backtester
+                raw_payload.get('Short TP-1 Price'),
+                alert_params.get('take_profit_1')
+            )
+        )
+        take_profit_2 = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('take_profit_2'),
+                raw_payload.get('TakeProfit2'),
+                raw_payload.get('Long TP-2 Price'),
+                raw_payload.get('Short TP-2 Price'),
+                alert_params.get('take_profit_2')
+            )
+        )
+        take_profit_3 = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('take_profit_3'),
+                raw_payload.get('TakeProfit3'),
+                raw_payload.get('Long TP-3 Price'),
+                raw_payload.get('Short TP-3 Price'),
+                alert_params.get('take_profit_3')
+            )
+        )
+        take_profit_4 = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('take_profit_4'),
+                raw_payload.get('TakeProfit4'),
+                raw_payload.get('Long TP-4 Price'),
+                raw_payload.get('Short TP-4 Price'),
+                alert_params.get('take_profit_4')
+            )
+        )
+        take_profit_5 = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('take_profit_5'),
+                raw_payload.get('TakeProfit5'),
+                raw_payload.get('Long TP-5 Price'),
+                raw_payload.get('Short TP-5 Price'),
+                alert_params.get('take_profit_5')
+            )
+        )
+
+        # Use first TP as take_profit_price if not already set
+        if take_profit_price is None and take_profit_1 is not None:
+            take_profit_price = take_profit_1
+
+        # Extract tp_count
+        tp_count = WebhookNormalizer._parse_int(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('tp_count'),
+                raw_payload.get('tpCount'),
+                alert_params.get('tp_count')
+            )
+        )
+
+        # Extract TradeAlgo technical indicators (optional)
+        atr_value = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('atr_value'),
+                raw_payload.get('AtrValue'),
+                alert_params.get('atr_value')
+            )
+        )
+        sl_dist_pips = WebhookNormalizer._parse_float(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('sl_dist_pips'),
+                raw_payload.get('slDistInPips'),
+                alert_params.get('sl_dist_pips')
+            )
+        )
+
+        # Extract Bull/Bear indicators for alternative direction detection
+        is_bull = WebhookNormalizer._parse_bool(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('is_bull'),
+                raw_payload.get('Bull'),
+                alert_params.get('is_bull')
+            )
+        )
+        is_bear = WebhookNormalizer._parse_bool(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('is_bear'),
+                raw_payload.get('Bear'),
+                alert_params.get('is_bear')
+            )
+        )
+        is_bull_exit = WebhookNormalizer._parse_bool(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('is_bull_exit'),
+                raw_payload.get('Bull Exit'),
+                alert_params.get('is_bull_exit')
+            )
+        )
+        is_bear_exit = WebhookNormalizer._parse_bool(
+            WebhookNormalizer._get_first_valid(
+                raw_payload.get('is_bear_exit'),
+                raw_payload.get('Bear Exit'),
+                alert_params.get('is_bear_exit')
+            )
+        )
+
         # Extract plot values (Requirements 2.5)
         # Extract fields matching pattern plot_N (where N is a digit)
         plot_values = {}
@@ -435,10 +570,14 @@ class WebhookNormalizer:
                 alert_type = AlertType.TP3.value
                 order_type = 'reduce'
                 logger.info(f"Mapped signal_type={signal_type} to TP3")
-            elif signal_type in ['tp4', 'tp5']:
-                alert_type = AlertType.PARTIAL.value
+            elif signal_type == 'tp4':
+                alert_type = AlertType.TP4.value
                 order_type = 'reduce'
-                logger.info(f"Mapped signal_type={signal_type} to PARTIAL")
+                logger.info(f"Mapped signal_type={signal_type} to TP4")
+            elif signal_type == 'tp5':
+                alert_type = AlertType.TP5.value
+                order_type = 'reduce'
+                logger.info(f"Mapped signal_type={signal_type} to TP5")
             elif signal_type in ['stop_loss', 'sl', 'stoploss']:
                 alert_type = AlertType.STOP_LOSS.value
                 order_type = 'exit'
@@ -447,7 +586,30 @@ class WebhookNormalizer:
                 alert_type = AlertType.EXIT.value
                 order_type = 'exit'
                 logger.info(f"Mapped signal_type={signal_type} to EXIT")
-        
+
+        # Bull/Bear indicator fallback - if no signal_type but Bull/Bear indicators present
+        if not signal_type and not action:
+            if is_bull is True:
+                action = 'buy'
+                order_type = 'enter_long'
+                alert_type = AlertType.ENTRY.value
+                market_position = 'long'
+                logger.info("Inferred bull entry from Bull indicator")
+            elif is_bear is True:
+                action = 'sell'
+                order_type = 'enter_short'
+                alert_type = AlertType.ENTRY.value
+                market_position = 'short'
+                logger.info("Inferred bear entry from Bear indicator")
+            elif is_bull_exit is True:
+                alert_type = AlertType.EXIT.value
+                order_type = 'exit'
+                logger.info("Inferred bull exit from Bull Exit indicator")
+            elif is_bear_exit is True:
+                alert_type = AlertType.EXIT.value
+                order_type = 'exit'
+                logger.info("Inferred bear exit from Bear Exit indicator")
+
         # Check if this looks like an unpopulated indicator alert
         # (action is empty or still a placeholder, but we have plot values)
         is_indicator_alert = (
@@ -529,6 +691,20 @@ class WebhookNormalizer:
             exit_trail_price=exit_trail_price,
             exit_trail_offset=exit_trail_offset,
             plot_values=plot_values,
+            # TradeAlgo Elite fields
+            take_profit_1=take_profit_1,
+            take_profit_2=take_profit_2,
+            take_profit_3=take_profit_3,
+            take_profit_4=take_profit_4,
+            take_profit_5=take_profit_5,
+            tp_count=tp_count,
+            atr_value=atr_value,
+            sl_dist_pips=sl_dist_pips,
+            is_bull=is_bull,
+            is_bear=is_bear,
+            is_bull_exit=is_bull_exit,
+            is_bear_exit=is_bear_exit,
+            # Metadata
             timestamp=timestamp,
             order_id=order_id,
             order_comment=order_comment,
@@ -579,7 +755,35 @@ class WebhookNormalizer:
             return int(float(value))
         except (ValueError, TypeError):
             return None
-    
+
+    @staticmethod
+    def _parse_bool(value) -> Optional[bool]:
+        """Safely parse a value to bool.
+
+        Handles:
+        - None values -> None
+        - Boolean values -> bool
+        - Numeric values (0/1, 0.0/1.0) -> bool
+        - String values ('true', 'false', '1', '0') -> bool
+        """
+        if value is None:
+            return None
+
+        if isinstance(value, bool):
+            return value
+
+        if isinstance(value, (int, float)):
+            return value == 1 or value == 1.0
+
+        if isinstance(value, str):
+            val_lower = value.strip().lower()
+            if val_lower in ('true', '1', 'yes'):
+                return True
+            if val_lower in ('false', '0', 'no', ''):
+                return False
+
+        return None
+
     @staticmethod
     def _get_first_valid(*values):
         """Get the first non-None value from the arguments.

@@ -198,31 +198,28 @@ class TradingViewAlertParser:
             except (ValueError, TypeError):
                 pass
 
-        # Extract stop_loss_price from alert_message_params
+        # Extract stop_loss_price from alert_message_params or TradeAlgo fields
         stop_loss = None
-        if 'stop_loss_price' in alert_message_params:
-            try:
-                stop_loss = float(alert_message_params['stop_loss_price'])
-            except (ValueError, TypeError):
-                pass
-        if stop_loss is None and 'stop_loss' in data:
-            try:
-                stop_loss = float(data['stop_loss'])
-            except (ValueError, TypeError):
-                pass
+        for field in ['stop_loss_price', 'stop_loss', 'StopLoss', 'Long Stop Price', 'Short Stop Price']:
+            val = alert_message_params.get(field) or data.get(field)
+            if val:
+                try:
+                    stop_loss = float(val)
+                    break
+                except (ValueError, TypeError):
+                    continue
 
-        # Extract order_price (for limit orders)
+        # Extract order_price (for limit orders) - include TradeAlgo entry_price fields
         price = None
-        if 'order_price' in data:
-            try:
-                price = float(data['order_price'])
-            except (ValueError, TypeError):
-                pass
-        if price is None and 'price' in data:
-            try:
-                price = float(data['price'])
-            except (ValueError, TypeError):
-                pass
+        for field in ['order_price', 'price', 'entry_price', 'EntryPrice',
+                      'Long Entry Price', 'Short Entry Price']:
+            val = data.get(field)
+            if val:
+                try:
+                    price = float(val)
+                    break
+                except (ValueError, TypeError):
+                    continue
 
         # Extract take_profit safely
         take_profit = None
@@ -334,6 +331,23 @@ class TradingViewAlertParser:
                 quantity = 1  # Default to 1 unit for indicators
                 logger.info(f"Using default quantity=1 for indicator alert")
 
+        # Extract multiple take profit levels for TradeAlgo Elite
+        take_profit_levels = {}
+        for i in range(1, 6):
+            for field in [f'take_profit_{i}', f'TakeProfit{i}',
+                          f'Long TP-{i} Price', f'Short TP-{i} Price']:
+                val = data.get(field)
+                if val:
+                    try:
+                        take_profit_levels[f'take_profit_{i}'] = float(val)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+
+        # Use first TP as the primary take_profit if not set
+        if take_profit is None and take_profit_levels.get('take_profit_1'):
+            take_profit = take_profit_levels['take_profit_1']
+
         return {
             'symbol': symbol,
             'action': action,
@@ -356,7 +370,13 @@ class TradingViewAlertParser:
                 'position_avg_price': data.get('position_avg_price'),
                 'market_position': data.get('market_position'),
                 'raw_alert_message': raw_alert_message,
-                'alert_message_params': alert_message_params  # Store parsed parameters
+                'alert_message_params': alert_message_params,  # Store parsed parameters
+                # TradeAlgo Elite fields
+                'take_profit_levels': take_profit_levels,
+                'tp_count': data.get('tp_count') or data.get('tpCount'),
+                'atr_value': data.get('atr_value') or data.get('AtrValue'),
+                'sl_dist_pips': data.get('sl_dist_pips') or data.get('slDistInPips'),
+                'signal_type': data.get('signal_type')
             }
         }
 
