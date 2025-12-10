@@ -206,12 +206,9 @@ const SymbolConfigs = () => {
             <Typography variant="h6" color="text.secondary">
               No symbol configurations yet
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Add your first symbol to configure TP/SL levels
+            <Typography variant="body2" color="text.secondary">
+              Use the "Add Symbol" button above or click a symbol from your trade history below
             </Typography>
-            <Button variant="outlined" startIcon={<AddIcon />} onClick={() => handleOpenDialog()}>
-              Add Symbol
-            </Button>
           </Box>
         ) : (
           <TableContainer>

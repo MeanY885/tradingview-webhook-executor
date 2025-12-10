@@ -23,15 +23,19 @@ def create_app(config_class=Config):
         }
     })
 
-    # Run database migrations on startup
+    # Create all database tables and run migrations on startup
     with app.app_context():
         try:
+            # Create all tables defined in models (handles new tables automatically)
+            db.create_all()
+            
+            # Run SQL migrations for schema changes
             from app.migrations import run_migrations
             run_migrations()
         except Exception as e:
-            app.logger.error(f"Failed to run migrations: {e}")
+            app.logger.error(f"Failed to initialize database: {e}")
             # Don't crash the app, but log the error
-            # Migrations might fail if database isn't ready yet
+            # Database might not be ready yet
 
     # Register blueprints
     from app.routes import auth, webhooks, webhook_logs, credentials, symbol_configs

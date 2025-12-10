@@ -31,8 +31,3 @@ ON symbol_configs(user_id, broker);
 
 CREATE INDEX IF NOT EXISTS idx_symbol_configs_symbol 
 ON symbol_configs(symbol);
-
--- Record migration
-INSERT INTO schema_migrations (version, name, applied_at)
-VALUES (9, '009_create_symbol_configs', CURRENT_TIMESTAMP)
-ON CONFLICT (version) DO NOTHING;
