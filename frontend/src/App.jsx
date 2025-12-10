@@ -9,6 +9,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import TradeHistory from './pages/TradeHistory'
+import SymbolConfigs from './pages/SymbolConfigs'
 import Settings from './pages/Settings'
 
 // Layout
@@ -41,6 +42,7 @@ function App() {
             <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
               <Route index element={<Dashboard />} />
               <Route path="history" element={<TradeHistory />} />
+              <Route path="symbols" element={<SymbolConfigs />} />
               <Route path="settings" element={<Settings />} />
             </Route>
           </Routes>

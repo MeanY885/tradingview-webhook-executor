@@ -11,11 +11,87 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 from app.models.webhook_log import WebhookLog
+from app.models.symbol_config import SymbolConfig
 from app.extensions import db
 from app.services.webhook_normalizer import WebhookNormalizer, NormalizedWebhook, AlertType
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def determine_trade_group_for_oanda_signal(
+    user_id: int,
+    symbol: str,
+    direction: str,
+    is_entry: bool,
+    closes_position: bool,
+    entry_price: Optional[float] = None
+) -> 'TradeGroupResult':
+    """
+    Determine trade group for Oanda indicator signals.
+    
+    SIMPLE RULE FOR OANDA FOREX:
+    - Entry (bull_entry/bear_entry) → Create new trade group
+    - Any other signal → Find the active trade for this symbol
+    - TP1 or SL → Closes the trade (handled by closes_position flag)
+    
+    One active trade per symbol at a time.
+    
+    Args:
+        user_id: User ID
+        symbol: Trading symbol (e.g., 'EURUSD')
+        direction: Trade direction ('long' or 'short')
+        is_entry: True if this is an entry signal
+        closes_position: True if this signal closes the trade (TP1/SL for tp_count=1)
+        entry_price: Entry price for entries
+        
+    Returns:
+        TradeGroupResult with trade_group_id, trade_direction, is_new_group, entry_price
+    """
+    if is_entry:
+        # Entry signal - always create a new trade group
+        trade_group_id = TradeGroupingService._generate_trade_group_id(user_id, symbol, direction)
+        logger.info(f"[Oanda] New trade group created: {trade_group_id} ({direction})")
+        return TradeGroupResult(
+            trade_group_id=trade_group_id,
+            trade_direction=direction,
+            is_new_group=True,
+            entry_price=entry_price
+        )
+    
+    # Non-entry signal - find the active trade for this symbol
+    # Try both directions since we want ANY active trade for this symbol
+    trade_group_id = None
+    found_direction = direction
+    
+    for try_direction in [direction, 'short' if direction == 'long' else 'long']:
+        trade_group_id = TradeGroupingService._find_active_trade_group_for_oanda(
+            user_id, symbol, try_direction
+        )
+        if trade_group_id:
+            found_direction = try_direction
+            break
+    
+    if trade_group_id:
+        # Found active trade - get entry price from the group
+        group_entry_price = TradeGroupingService._get_group_entry_price(trade_group_id)
+        logger.info(f"[Oanda] Continuing trade group: {trade_group_id} ({found_direction}) closes_position={closes_position}")
+        return TradeGroupResult(
+            trade_group_id=trade_group_id,
+            trade_direction=found_direction,
+            is_new_group=False,
+            entry_price=group_entry_price
+        )
+    else:
+        # No active group found - create orphaned group for tracking
+        trade_group_id = TradeGroupingService._generate_trade_group_id(user_id, symbol, direction)
+        logger.warning(f"[Oanda] No active trade group found for {symbol}, creating orphaned group: {trade_group_id}")
+        return TradeGroupResult(
+            trade_group_id=trade_group_id,
+            trade_direction=direction,
+            is_new_group=False,
+            entry_price=None
+        )
 
 
 @dataclass
@@ -221,9 +297,12 @@ class TradeGroupingService:
     @staticmethod
     def get_trade_group_status(trade_group_id: str) -> str:
         """
-        Get the status of a trade group based on the latest webhook.
+        Get the status of a trade group based on webhooks.
         
-        A group is CLOSED if the latest webhook has:
+        A group is CLOSED if:
+        - SL or EXIT signal received
+        - The FINAL TP was hit (based on tp_count from entry)
+        - metadata.closes_position = True
         - position_size = 0 AND market_position = 'flat'
         
         Args:
@@ -234,16 +313,63 @@ class TradeGroupingService:
             
         Requirements: 1.3
         """
-        latest = WebhookLog.query.filter_by(
+        # Get all webhooks in the group, ordered by timestamp
+        webhooks = WebhookLog.query.filter_by(
             trade_group_id=trade_group_id
-        ).order_by(WebhookLog.timestamp.desc()).first()
+        ).order_by(WebhookLog.timestamp.asc()).all()
         
-        if not latest:
+        if not webhooks:
             return 'CLOSED'  # No webhooks means closed
         
-        # Check position_size_after field first (new field)
+        entry_webhook = webhooks[0]
+        
+        # Get tp_count and sl_count from SymbolConfig
+        symbol_config = SymbolConfig.get_config(
+            user_id=entry_webhook.user_id,
+            symbol=entry_webhook.symbol,
+            broker=entry_webhook.broker or 'oanda'
+        )
+        tp_count = symbol_config.tp_count
+        sl_count = symbol_config.sl_count
+        
+        # Determine which TP/SL level closes the trade
+        closing_tp = f'TP{tp_count}'
+        closing_sl = f'SL{sl_count}' if sl_count > 1 else 'SL'
+        
+        for webhook in webhooks:
+            if not webhook.tp_level:
+                continue
+                
+            tp_level = webhook.tp_level.upper()
+            
+            # EXIT always closes
+            if tp_level == 'EXIT':
+                return 'CLOSED'
+            
+            # Check for final SL
+            if sl_count == 1 and tp_level in ['SL', 'SL1']:
+                return 'CLOSED'
+            if tp_level == closing_sl:
+                return 'CLOSED'
+            
+            # Check for final TP
+            if tp_level == closing_tp:
+                return 'CLOSED'
+            
+            # Check metadata for closes_position flag
+            if webhook.metadata_json:
+                try:
+                    metadata = json.loads(webhook.metadata_json)
+                    if metadata.get('closes_position') is True:
+                        return 'CLOSED'
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        
+        # Check latest webhook for position state (for non-Oanda trades)
+        latest = webhooks[-1]  # Most recent
+        
+        # Check position_size_after field
         if latest.position_size_after is not None and latest.position_size_after == 0:
-            # Also check metadata for market_position
             metadata = {}
             if latest.metadata_json:
                 try:
@@ -308,6 +434,140 @@ class TradeGroupingService:
         timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
         unique_id = uuid.uuid4().hex[:8].upper()
         return f"{symbol}-{direction.upper()}-{timestamp}-{unique_id}"
+
+    @staticmethod
+    def _find_active_trade_group_for_oanda(
+        user_id: int,
+        symbol: str,
+        direction: str
+    ) -> Optional[str]:
+        """
+        Find the active trade group for an Oanda forex symbol.
+        
+        SIMPLE RULE: A trade is active until TP1 or SL is hit.
+        Only one active trade per symbol at a time.
+        
+        A trade group is CLOSED if any webhook in the group has:
+        - tp_level = 'TP1' or 'SL' (for tp_count=1 trades)
+        - metadata.closes_position = True
+        
+        Args:
+            user_id: User ID
+            symbol: Trading symbol (e.g., 'EUR_USD')
+            direction: Trade direction ('long' or 'short')
+            
+        Returns:
+            trade_group_id of the active group, or None if no active trade
+        """
+        cutoff_date = datetime.utcnow() - timedelta(days=7)
+        
+        # Find all recent trade groups for this symbol
+        recent_logs = WebhookLog.query.filter(
+            WebhookLog.user_id == user_id,
+            WebhookLog.symbol == symbol,
+            WebhookLog.trade_direction == direction,
+            WebhookLog.trade_group_id.isnot(None),
+            WebhookLog.timestamp >= cutoff_date
+        ).order_by(WebhookLog.timestamp.desc()).limit(50).all()
+        
+        # Check each group to see if it's still active
+        groups_checked = set()
+        
+        for log in recent_logs:
+            if log.trade_group_id in groups_checked:
+                continue
+            groups_checked.add(log.trade_group_id)
+            
+            # Check if this group has been closed (TP1 or SL hit)
+            if TradeGroupingService._is_oanda_trade_closed(log.trade_group_id):
+                continue
+            
+            # Found an active group
+            logger.info(f"[Oanda] Found active trade group: {log.trade_group_id}")
+            return log.trade_group_id
+        
+        return None
+    
+    @staticmethod
+    def _is_oanda_trade_closed(trade_group_id: str) -> bool:
+        """
+        Check if an Oanda trade group is closed.
+        
+        Uses SymbolConfig to determine tp_count and sl_count for the symbol.
+        
+        A trade is closed if:
+        - Final SL hit (based on sl_count from config)
+        - EXIT signal received
+        - Final TP hit (based on tp_count from config)
+        - metadata.closes_position = True
+        
+        Args:
+            trade_group_id: The trade group ID to check
+            
+        Returns:
+            True if the trade is closed, False if still active
+        """
+        # Get all webhooks in this group, ordered by timestamp
+        webhooks = WebhookLog.query.filter_by(
+            trade_group_id=trade_group_id
+        ).order_by(WebhookLog.timestamp.asc()).all()
+        
+        if not webhooks:
+            return True  # No webhooks = closed
+        
+        entry_webhook = webhooks[0]
+        
+        # Get tp_count and sl_count from SymbolConfig
+        symbol_config = SymbolConfig.get_config(
+            user_id=entry_webhook.user_id,
+            symbol=entry_webhook.symbol,
+            broker=entry_webhook.broker or 'oanda'
+        )
+        tp_count = symbol_config.tp_count
+        sl_count = symbol_config.sl_count
+        
+        # Determine which TP/SL level closes the trade
+        closing_tp = f'TP{tp_count}'  # TP1, TP2, or TP3
+        closing_sl = f'SL{sl_count}' if sl_count > 1 else 'SL'  # SL, SL2, or SL3
+        
+        logger.debug(f"Checking trade {trade_group_id}: closing_tp={closing_tp}, closing_sl={closing_sl}")
+        
+        for webhook in webhooks:
+            # EXIT always closes
+            if webhook.tp_level == 'EXIT':
+                logger.debug(f"Trade group {trade_group_id} closed by EXIT")
+                return True
+            
+            # Check for SL (handle both 'SL' and 'SL1', 'SL2', 'SL3')
+            if webhook.tp_level:
+                tp_level = webhook.tp_level.upper()
+                
+                # Single SL config: any SL closes
+                if sl_count == 1 and tp_level in ['SL', 'SL1']:
+                    logger.debug(f"Trade group {trade_group_id} closed by {tp_level}")
+                    return True
+                
+                # Multi-SL config: only final SL closes
+                if tp_level == closing_sl or (tp_level == 'SL' and sl_count == 1):
+                    logger.debug(f"Trade group {trade_group_id} closed by final SL: {tp_level}")
+                    return True
+                
+                # Check if this is the final TP
+                if tp_level == closing_tp:
+                    logger.debug(f"Trade group {trade_group_id} closed by final TP: {closing_tp}")
+                return True
+            
+            # Check metadata for closes_position flag
+            if webhook.metadata_json:
+                try:
+                    metadata = json.loads(webhook.metadata_json)
+                    if metadata.get('closes_position') is True:
+                        logger.debug(f"Trade group {trade_group_id} closed by closes_position flag")
+                        return True
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        
+        return False
 
     @staticmethod
     def _find_active_trade_group(

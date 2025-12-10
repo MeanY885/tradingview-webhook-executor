@@ -34,11 +34,12 @@ def create_app(config_class=Config):
             # Migrations might fail if database isn't ready yet
 
     # Register blueprints
-    from app.routes import auth, webhooks, webhook_logs, credentials
+    from app.routes import auth, webhooks, webhook_logs, credentials, symbol_configs
     app.register_blueprint(auth.bp)
     app.register_blueprint(webhooks.bp)
     app.register_blueprint(webhook_logs.bp)
     app.register_blueprint(credentials.bp)
+    app.register_blueprint(symbol_configs.bp, url_prefix='/api/symbol-configs')
 
     # Register SocketIO events
     from app.services import websocket

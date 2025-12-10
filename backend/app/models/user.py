@@ -26,6 +26,7 @@ class User(db.Model):
     # Relationships
     credentials = db.relationship('UserCredentials', back_populates='user', cascade='all, delete-orphan')
     webhook_logs = db.relationship('WebhookLog', back_populates='user')
+    symbol_configs = db.relationship('SymbolConfig', back_populates='user', cascade='all, delete-orphan')
 
     def set_password(self, password):
         """Hash and set password."""

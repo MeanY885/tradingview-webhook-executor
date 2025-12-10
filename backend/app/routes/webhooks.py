@@ -10,10 +10,12 @@ from app.services.blofin import BlofinClient
 from app.services.oanda import OandaClient
 from app.services.encryption import encryption_service
 from app.services.websocket import broadcast_webhook_event
-from app.services.trade_grouping import TradeGroupingService
+from app.services.trade_grouping import TradeGroupingService, determine_trade_group_for_oanda_signal
 from app.services.webhook_normalizer import WebhookNormalizer, AlertType
 from app.services.pnl_calculator import PnLCalculator
+from app.services.parsers.oanda_indicator import OandaIndicatorParser
 import logging
+import json as json_module
 import uuid
 
 bp = Blueprint('webhooks', __name__)
@@ -81,31 +83,50 @@ def _process_webhook(broker: str, webhook_identifier: str):
         raw_payload = request.get_data(as_text=True)
         logger.info(f"Received webhook for user {user.id} ({broker}) from IP {client_ip}: {raw_payload[:200]}")
 
-        # 4. Parse alert - use lenient mode to capture unknown formats
-        parser = TradingViewAlertParser()
-        params = parser.parse_alert(raw_payload)
+        # 4. Parse alert - try specialized parsers first, then fall back to generic
+        params = None
+        oanda_parsed_signal = None
+        
+        # Try to parse as JSON first to check for specialized formats
+        try:
+            raw_payload_dict = json_module.loads(raw_payload)
+        except json_module.JSONDecodeError:
+            raw_payload_dict = {}
+        
+        # For Oanda, try the specialized indicator parser first
+        parser = TradingViewAlertParser()  # Always create for validation
+        
+        if broker == 'oanda' and OandaIndicatorParser.can_parse(raw_payload_dict):
+            logger.info(f"Using Oanda indicator parser for user {user.id}")
+            oanda_parsed_signal = OandaIndicatorParser.parse(raw_payload_dict)
+            params = OandaIndicatorParser.to_normalized_params(oanda_parsed_signal)
+        else:
+            # Fall back to generic TradingView parser
+            params = parser.parse_alert(raw_payload)
 
-        # 4. Convert symbol to broker format
+        # 5. Convert symbol to broker format
         original_symbol = params['symbol']
         params['symbol'] = SymbolConverter.normalize_symbol(original_symbol, broker)
 
         logger.info(f"Parsed alert: {params['action']} {params['quantity']} {params['symbol']} (original: {original_symbol})")
 
-        # 5. Validate params
+        # 6. Validate params
         is_valid, error_msg = parser.validate_params(params)
         if not is_valid:
             log_entry = _create_log_entry(
                 user.id, raw_payload, broker, params,
-                original_symbol, status='invalid', error=error_msg
+                original_symbol, status='invalid', error=error_msg,
+                oanda_signal=oanda_parsed_signal
             )
             broadcast_webhook_event(user.id, log_entry)
             logger.warning(f"Invalid alert params: {error_msg}")
             return jsonify({'success': False, 'error': error_msg}), 400
 
-        # 6. Create pending log entry
+        # 7. Create pending log entry
         log_entry = _create_log_entry(
             user.id, raw_payload, broker, params,
-            original_symbol, status='pending'
+            original_symbol, status='pending',
+            oanda_signal=oanda_parsed_signal
         )
 
         # 7. Check for test mode
@@ -208,7 +229,7 @@ def _process_webhook(broker: str, webhook_identifier: str):
         return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 
-def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, status='pending', error=None):
+def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, status='pending', error=None, oanda_signal=None):
     """Create webhook log entry with TP tracking and SL/TP change detection.
     
     Uses WebhookNormalizer for consistent parsing and stores:
@@ -218,6 +239,9 @@ def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, sta
     - current_stop_loss, current_take_profit: Current SL/TP values
     - exit_trail_price, exit_trail_offset: Trailing stop parameters
     - sl_changed, tp_changed: Flags indicating SL/TP value changes
+    
+    Args:
+        oanda_signal: Optional OandaParsedSignal for Oanda indicator alerts
     
     Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 5.1, 5.2
     """
@@ -242,47 +266,77 @@ def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, sta
     except (json.JSONDecodeError, TypeError):
         raw_payload_dict = {}
     
-    # Normalize the webhook payload to extract TP tracking fields
-    normalized = WebhookNormalizer.normalize(raw_payload_dict)
-    
-    # Determine trade group and direction using normalized data
-    result = TradeGroupingService.determine_trade_group_from_normalized(
-        user_id=user_id,
-        normalized=normalized
-    )
-    trade_group_id = result.trade_group_id
-    trade_direction = result.trade_direction
-    
-    # Extract TP tracking fields from normalized webhook
-    tp_level = normalized.alert_type if normalized.alert_type != 'UNKNOWN' else None
-    position_size_after = normalized.position_size
+    # Determine trade group based on signal type
+    if oanda_signal is not None:
+        # Use Oanda-specific grouping logic
+        result = determine_trade_group_for_oanda_signal(
+            user_id=user_id,
+            symbol=params['symbol'],
+            direction=oanda_signal.direction,
+            is_entry=oanda_signal.is_entry,
+            closes_position=oanda_signal.closes_position,
+            entry_price=oanda_signal.entry_price
+        )
+        trade_group_id = result.trade_group_id
+        trade_direction = result.trade_direction
+        
+        # Use tp_level from parsed signal
+        tp_level = oanda_signal.tp_level
+        position_size_after = 0 if oanda_signal.closes_position else None
+        
+        logger.info(f"[Oanda] Trade group: {trade_group_id}, tp_level: {tp_level}, closes: {oanda_signal.closes_position}")
+    else:
+        # Use generic WebhookNormalizer for other brokers
+        normalized = WebhookNormalizer.normalize(raw_payload_dict)
+        
+        result = TradeGroupingService.determine_trade_group_from_normalized(
+            user_id=user_id,
+            normalized=normalized
+        )
+        trade_group_id = result.trade_group_id
+        trade_direction = result.trade_direction
+        
+        # Extract TP tracking fields from normalized webhook
+        tp_level = normalized.alert_type if normalized.alert_type != 'UNKNOWN' else None
+        position_size_after = normalized.position_size
     
     # Determine entry_price:
     # - For entries: use the order_price from this webhook
     # - For exits: use the cached entry_price from the trade group result
     entry_price = None
-    if result.is_new_group:
-        # This is an entry - use the order price as entry price
-        entry_price = normalized.order_price
+    exit_price = None
+    
+    if oanda_signal is not None:
+        # Oanda signal - use parsed values
+        if oanda_signal.is_entry:
+            entry_price = oanda_signal.entry_price
+        else:
+            entry_price = result.entry_price  # From trade group lookup
+            exit_price = oanda_signal.exit_price
     else:
-        # This is an exit - use the cached entry price from the group
-        entry_price = result.entry_price
+        # Generic webhook
+        if result.is_new_group:
+            entry_price = normalized.order_price
+        else:
+            entry_price = result.entry_price
+        exit_price = normalized.order_price
     
     # Calculate P&L for exits (TP1, TP2, TP3, SL, PARTIAL, EXIT)
     # Requirements: 2.1, 2.2, 2.3
     realized_pnl_percent = None
     realized_pnl_absolute = None
     
-    exit_alert_types = [AlertType.TP1.value, AlertType.TP2.value, AlertType.TP3.value,
+    exit_alert_types = ['TP1', 'TP2', 'TP3', 'SL', 'EXIT', 
+                        AlertType.TP1.value, AlertType.TP2.value, AlertType.TP3.value,
                         AlertType.STOP_LOSS.value, AlertType.PARTIAL.value, AlertType.EXIT.value]
     
-    if tp_level in exit_alert_types and entry_price and normalized.order_price and trade_direction:
+    if tp_level in exit_alert_types and entry_price and exit_price and trade_direction:
         try:
-            exit_quantity = normalized.order_contracts or params.get('quantity', 0)
+            exit_quantity = params.get('quantity', 0)
             if exit_quantity and exit_quantity > 0:
                 pnl_result = PnLCalculator.calculate_exit_pnl(
                     entry_price=entry_price,
-                    exit_price=normalized.order_price,
+                    exit_price=exit_price,
                     direction=trade_direction,
                     quantity=exit_quantity
                 )
@@ -292,28 +346,31 @@ def _create_log_entry(user_id, raw_payload, broker, params, original_symbol, sta
         except (ValueError, TypeError) as e:
             logger.warning(f"Failed to calculate P&L: {e}")
     
-    # Get leverage from normalized webhook (may be in alert_message)
-    leverage = normalized.leverage or params.get('leverage')
+    # Get leverage from params (may be in alert_message)
+    leverage = params.get('leverage')
     
-    # Get stop_loss from normalized webhook (may be in alert_message)
-    stop_loss = normalized.stop_loss_price or params.get('stop_loss')
-    
-    # Extract exit strategy fields from normalized webhook
-    # Requirements: 1.1, 1.2, 2.1, 2.2
-    # current_stop_loss: Use stop_loss_price (which may come from exit_stop mapping)
-    current_stop_loss = normalized.stop_loss_price
-    # current_take_profit: Use take_profit_price (which may come from exit_limit mapping)
-    current_take_profit = normalized.take_profit_price
-    # Trailing stop fields
-    exit_trail_price = normalized.exit_trail_price
-    exit_trail_offset = normalized.exit_trail_offset
+    # Get stop_loss and take_profit
+    if oanda_signal is not None:
+        stop_loss = oanda_signal.stop_loss
+        current_stop_loss = oanda_signal.stop_loss
+        current_take_profit = oanda_signal.take_profit_1
+        exit_trail_price = None
+        exit_trail_offset = None
+        is_new_group = oanda_signal.is_entry
+    else:
+        stop_loss = normalized.stop_loss_price or params.get('stop_loss')
+        current_stop_loss = normalized.stop_loss_price
+        current_take_profit = normalized.take_profit_price
+        exit_trail_price = normalized.exit_trail_price
+        exit_trail_offset = normalized.exit_trail_offset
+        is_new_group = result.is_new_group
     
     # Detect SL/TP changes from previous webhook in the trade group
     # Requirements: 1.3
     sl_changed = False
     tp_changed = False
     
-    if trade_group_id and not result.is_new_group:
+    if trade_group_id and not is_new_group:
         # Only detect changes for non-entry webhooks (exits/updates)
         sl_changed, tp_changed = TradeGroupingService.detect_sltp_changes(
             trade_group_id=trade_group_id,

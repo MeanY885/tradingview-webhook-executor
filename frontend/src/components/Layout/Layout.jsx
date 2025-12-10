@@ -21,7 +21,8 @@ import {
   History as HistoryIcon,
   Settings as SettingsIcon,
   Logout as LogoutIcon,
-  ShowChart as ShowChartIcon
+  ShowChart as ShowChartIcon,
+  TuneOutlined as TuneIcon
 } from '@mui/icons-material'
 import { useAuth } from '../../context/AuthContext'
 
@@ -45,6 +46,7 @@ const Layout = () => {
   const menuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
     { text: 'Trade History', icon: <HistoryIcon />, path: '/history' },
+    { text: 'Symbol Config', icon: <TuneIcon />, path: '/symbols' },
     { text: 'Settings', icon: <SettingsIcon />, path: '/settings' }
   ]
 
