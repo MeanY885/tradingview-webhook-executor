@@ -26,16 +26,20 @@ def create_app(config_class=Config):
     # Create all database tables and run migrations on startup
     with app.app_context():
         try:
+            # Import all models so SQLAlchemy knows about them
+            from app.models import User, UserCredentials, WebhookLog, SymbolConfig
+            
             # Create all tables defined in models (handles new tables automatically)
             db.create_all()
+            app.logger.info("Database tables created/verified")
             
             # Run SQL migrations for schema changes
             from app.migrations import run_migrations
             run_migrations()
         except Exception as e:
             app.logger.error(f"Failed to initialize database: {e}")
-            # Don't crash the app, but log the error
-            # Database might not be ready yet
+            import traceback
+            traceback.print_exc()
 
     # Register blueprints
     from app.routes import auth, webhooks, webhook_logs, credentials, symbol_configs
