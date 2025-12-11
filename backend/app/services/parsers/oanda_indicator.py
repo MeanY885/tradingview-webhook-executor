@@ -3,34 +3,42 @@
 This parser handles the specific JSON format from Oanda forex indicators.
 
 TRADE LIFECYCLE:
-- Entry signal (bull_entry/bear_entry) creates a new trade with tp_count
+- Entry signal (bull_entry/bear_entry) creates a new trade
 - All subsequent signals for the same symbol belong to that trade
-- Trade closes when the FINAL TP is hit (based on tp_count) or SL is hit:
-  - tp_count=1: TP1 or SL closes the trade
-  - tp_count=2: TP2 or SL closes the trade (TP1 is partial)
-  - tp_count=3: TP3 or SL closes the trade (TP1, TP2 are partial)
+- Trade closes when:
+  - position_size = 0 (actual position closed - highest priority)
+  - Final TP hit (based on tp_count from SymbolConfig)
+  - Final SL hit (based on sl_count from SymbolConfig)
+  - EXIT signal received
 
-Entry Alert (has tp_count):
-{
-    "symbol": "EURUSD",
-    "signal_type": "bull_entry",
-    "entry_price": "1.16429",
-    "stop_loss": "1.160214985",
-    "take_profit_1": "1.16530875375",
-    "take_profit_2": "1.16630",
-    "take_profit_3": "1.16730",
-    "tp_count": "3",
-    "quantity": "10000"
-}
+TRADINGVIEW ALERT MESSAGE EXAMPLES:
 
-TP Hit Alert (NO tp_count - must look up from entry):
-{
-    "symbol": "EURUSD",
-    "signal_type": "tp1",
-    "market_position": "long",
-    "exit_price": "1.16536",
-    "quantity": "2000"
-}
+Bull Entry:
+{"symbol": "{{ticker}}", "signal_type": "bull_entry", "entry_price": "{{plot_1}}", 
+ "stop_loss": "{{plot_2}}", "take_profit_1": "{{plot_3}}", "take_profit_2": "{{plot_4}}", 
+ "take_profit_3": "{{plot_5}}", "tp_count": "{{plot_10}}"}
+
+Bear Entry:
+{"symbol": "{{ticker}}", "signal_type": "bear_entry", "entry_price": "{{plot_1}}", 
+ "stop_loss": "{{plot_2}}", "take_profit_1": "{{plot_3}}", "take_profit_2": "{{plot_4}}", 
+ "take_profit_3": "{{plot_5}}", "tp_count": "{{plot_10}}"}
+
+TP1 Hit (Long):
+{"symbol": "{{ticker}}", "signal_type": "tp1", "market_position": "long", "exit_price": "{{close}}"}
+
+TP2 Hit (Long):
+{"symbol": "{{ticker}}", "signal_type": "tp2", "market_position": "long", "exit_price": "{{close}}"}
+
+TP3 Hit (Long):
+{"symbol": "{{ticker}}", "signal_type": "tp3", "market_position": "long", "exit_price": "{{close}}"}
+
+Stop Loss:
+{"symbol": "{{ticker}}", "signal_type": "stop_loss", "exit_price": "{{close}}"}
+
+Manual Exit:
+{"symbol": "{{ticker}}", "signal_type": "exit", "exit_price": "{{close}}"}
+
+NOTE: For short positions, use "market_position": "short" in TP alerts.
 """
 import json
 import logging
@@ -121,14 +129,20 @@ class OandaIndicatorParser:
     def parse(raw_payload: dict) -> OandaParsedSignal:
         """Parse an Oanda indicator alert.
         
+        Handles multiple payload formats:
+        1. Simple format: symbol, entry_price, quantity, take_profit_1, etc.
+        2. TradingView format: ticker, close, order_contracts, plot_0/plot_1, etc.
+        
         Args:
             raw_payload: Raw webhook payload dictionary
             
         Returns:
             OandaParsedSignal with parsed data
         """
-        # Extract symbol
-        symbol = str(raw_payload.get('symbol', '')).upper()
+        # Extract symbol (try multiple field names)
+        symbol = (
+            str(raw_payload.get('symbol', '') or raw_payload.get('ticker', '')).upper()
+        )
         
         # Parse signal_type
         signal_type_str = str(raw_payload.get('signal_type', '')).lower()
@@ -142,16 +156,45 @@ class OandaIndicatorParser:
         # Determine action (buy/sell)
         action = OandaIndicatorParser._determine_action(signal_type, direction, is_entry)
         
-        # Parse quantity
-        quantity = OandaIndicatorParser._parse_float(raw_payload.get('quantity'), 0)
+        # Parse quantity - try multiple field names
+        # order_contracts from TradingView, quantity from simple format
+        quantity = OandaIndicatorParser._parse_float(raw_payload.get('quantity'))
+        if quantity is None or quantity == 0:
+            quantity = OandaIndicatorParser._parse_float(raw_payload.get('order_contracts'))
+        if quantity is None or quantity == 0:
+            quantity = OandaIndicatorParser._parse_float(raw_payload.get('position_size'))
+        if quantity is None:
+            quantity = 0
         
-        # Parse prices
+        # Parse prices - try multiple field names
+        # For entries: entry_price, order_price, close (current price)
         entry_price = OandaIndicatorParser._parse_float(raw_payload.get('entry_price'))
-        exit_price = OandaIndicatorParser._parse_float(raw_payload.get('exit_price'))
-        stop_loss = OandaIndicatorParser._parse_float(raw_payload.get('stop_loss'))
+        if entry_price is None:
+            entry_price = OandaIndicatorParser._parse_float(raw_payload.get('order_price'))
+        if entry_price is None:
+            entry_price = OandaIndicatorParser._parse_float(raw_payload.get('close'))
         
-        # Parse take profit levels
+        # For exits: exit_price, order_price, close
+        exit_price = OandaIndicatorParser._parse_float(raw_payload.get('exit_price'))
+        if exit_price is None and is_exit:
+            exit_price = OandaIndicatorParser._parse_float(raw_payload.get('order_price'))
+        if exit_price is None and is_exit:
+            exit_price = OandaIndicatorParser._parse_float(raw_payload.get('close'))
+        
+        # Parse stop loss - try multiple field names
+        stop_loss = OandaIndicatorParser._parse_float(raw_payload.get('stop_loss'))
+        if stop_loss is None:
+            stop_loss = OandaIndicatorParser._parse_float(raw_payload.get('exit_stop'))
+        
+        # Parse take profit levels - try multiple field names
         take_profit_1 = OandaIndicatorParser._parse_float(raw_payload.get('take_profit_1'))
+        if take_profit_1 is None:
+            take_profit_1 = OandaIndicatorParser._parse_float(raw_payload.get('exit_limit'))
+        # Also check plot_0/plot_1 which some indicators use for TP levels
+        if take_profit_1 is None:
+            # plot_1 often contains the TP price in some indicator setups
+            take_profit_1 = OandaIndicatorParser._parse_float(raw_payload.get('plot_1'))
+        
         take_profit_2 = OandaIndicatorParser._parse_float(raw_payload.get('take_profit_2'))
         take_profit_3 = OandaIndicatorParser._parse_float(raw_payload.get('take_profit_3'))
         
@@ -383,6 +426,15 @@ class OandaIndicatorParser:
         # Use exit_price for exits, entry_price for entries
         price = parsed.exit_price if parsed.is_exit else parsed.entry_price
         
+        # Extract test_mode from raw payload if present
+        test_mode = False
+        if parsed.raw_payload:
+            test_mode_val = parsed.raw_payload.get('test_mode')
+            if isinstance(test_mode_val, bool):
+                test_mode = test_mode_val
+            elif isinstance(test_mode_val, str):
+                test_mode = test_mode_val.lower() == 'true'
+        
         return {
             'symbol': parsed.symbol,
             'action': parsed.action,
@@ -393,7 +445,7 @@ class OandaIndicatorParser:
             'take_profit': parsed.take_profit_1,
             'trailing_stop_pct': None,
             'leverage': None,
-            'test_mode': False,
+            'test_mode': test_mode,
             'metadata': {
                 'signal_type': parsed.signal_type.value,
                 'market_position': parsed.direction,

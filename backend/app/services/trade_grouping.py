@@ -299,11 +299,14 @@ class TradeGroupingService:
         """
         Get the status of a trade group based on webhooks.
         
-        A group is CLOSED if:
-        - SL or EXIT signal received
-        - The FINAL TP was hit (based on tp_count from entry)
-        - metadata.closes_position = True
-        - position_size = 0 AND market_position = 'flat'
+        A group is CLOSED if ANY of these conditions are met:
+        1. position_size = 0 in any webhook (actual position closed)
+        2. EXIT signal received
+        3. Final TP hit (based on tp_count from SymbolConfig)
+        4. Final SL hit (based on sl_count from SymbolConfig)
+        5. metadata.closes_position = True
+        
+        IMPORTANT: position_size = 0 takes priority over TP/SL config.
         
         Args:
             trade_group_id: The trade group ID to check
@@ -337,35 +340,50 @@ class TradeGroupingService:
         closing_sl = f'SL{sl_count}' if sl_count > 1 else 'SL'
         
         for webhook in webhooks:
-            if not webhook.tp_level:
-                continue
-                
-            tp_level = webhook.tp_level.upper()
-            
-            # EXIT always closes
-            if tp_level == 'EXIT':
+            # PRIORITY 1: Check actual position size
+            # If position_size = 0, trade is closed regardless of TP/SL config
+            if webhook.position_size_after is not None and webhook.position_size_after == 0:
                 return 'CLOSED'
             
-            # Check for final SL
-            if sl_count == 1 and tp_level in ['SL', 'SL1']:
-                return 'CLOSED'
-            if tp_level == closing_sl:
-                return 'CLOSED'
-            
-            # Check for final TP
-            if tp_level == closing_tp:
-                return 'CLOSED'
-            
-            # Check metadata for closes_position flag
+            # Check metadata for position_size and closes_position
             if webhook.metadata_json:
                 try:
                     metadata = json.loads(webhook.metadata_json)
+                    
+                    # Check position_size in metadata
+                    pos_size = metadata.get('position_size')
+                    if pos_size is not None:
+                        try:
+                            if float(str(pos_size)) == 0:
+                                return 'CLOSED'
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    # Check closes_position flag
                     if metadata.get('closes_position') is True:
                         return 'CLOSED'
                 except (json.JSONDecodeError, TypeError):
                     pass
+            
+            # PRIORITY 2: Check signal type (tp_level)
+            if webhook.tp_level:
+                tp_level = webhook.tp_level.upper()
+                
+                # EXIT always closes
+                if tp_level == 'EXIT':
+                    return 'CLOSED'
+                
+                # Check for final SL
+                if sl_count == 1 and tp_level in ['SL', 'SL1']:
+                    return 'CLOSED'
+                if sl_count > 1 and tp_level == closing_sl:
+                    return 'CLOSED'
+                
+                # Check for final TP
+                if tp_level == closing_tp:
+                    return 'CLOSED'
         
-        # Check latest webhook for position state (for non-Oanda trades)
+        # Check latest webhook for position state (fallback for non-Oanda trades)
         latest = webhooks[-1]  # Most recent
         
         # Check position_size_after field
@@ -493,13 +511,16 @@ class TradeGroupingService:
         """
         Check if an Oanda trade group is closed.
         
-        Uses SymbolConfig to determine tp_count and sl_count for the symbol.
+        A trade is closed if ANY of these conditions are met:
+        1. position_size = 0 in the latest webhook (actual position closed)
+        2. EXIT signal received
+        3. Final TP hit (based on tp_count from SymbolConfig)
+        4. Final SL hit (based on sl_count from SymbolConfig)
+        5. metadata.closes_position = True
         
-        A trade is closed if:
-        - Final SL hit (based on sl_count from config)
-        - EXIT signal received
-        - Final TP hit (based on tp_count from config)
-        - metadata.closes_position = True
+        IMPORTANT: position_size = 0 takes priority over TP/SL config.
+        If the indicator closes 100% on TP1, the trade is closed even if
+        tp_count = 3 in the config.
         
         Args:
             trade_group_id: The trade group ID to check
@@ -533,39 +554,61 @@ class TradeGroupingService:
         logger.debug(f"Checking trade {trade_group_id}: closing_tp={closing_tp}, closing_sl={closing_sl}")
         
         for webhook in webhooks:
-            # EXIT always closes
-            if webhook.tp_level == 'EXIT':
-                logger.debug(f"Trade group {trade_group_id} closed by EXIT")
+            # PRIORITY 1: Check actual position size
+            # If position_size = 0, trade is closed regardless of TP/SL config
+            position_closed_by_size = False
+            
+            # Check position_size_after field first
+            if webhook.position_size_after is not None and webhook.position_size_after == 0:
+                position_closed_by_size = True
+            
+            # Also check metadata for position_size
+            if webhook.metadata_json:
+                try:
+                    metadata = json.loads(webhook.metadata_json)
+                    pos_size = metadata.get('position_size')
+                    if pos_size is not None:
+                        try:
+                            if float(str(pos_size)) == 0:
+                                position_closed_by_size = True
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    # Check closes_position flag
+                    if metadata.get('closes_position') is True:
+                        logger.debug(f"Trade group {trade_group_id} closed by closes_position flag")
+                        return True
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            if position_closed_by_size:
+                logger.debug(f"Trade group {trade_group_id} closed by position_size=0")
                 return True
             
-            # Check for SL (handle both 'SL' and 'SL1', 'SL2', 'SL3')
+            # PRIORITY 2: Check signal type
             if webhook.tp_level:
                 tp_level = webhook.tp_level.upper()
                 
+                # EXIT always closes
+                if tp_level == 'EXIT':
+                    logger.debug(f"Trade group {trade_group_id} closed by EXIT")
+                    return True
+                
+                # Check for SL (handle both 'SL' and 'SL1', 'SL2', 'SL3')
                 # Single SL config: any SL closes
                 if sl_count == 1 and tp_level in ['SL', 'SL1']:
                     logger.debug(f"Trade group {trade_group_id} closed by {tp_level}")
                     return True
                 
                 # Multi-SL config: only final SL closes
-                if tp_level == closing_sl or (tp_level == 'SL' and sl_count == 1):
+                if sl_count > 1 and tp_level == closing_sl:
                     logger.debug(f"Trade group {trade_group_id} closed by final SL: {tp_level}")
                     return True
                 
                 # Check if this is the final TP
                 if tp_level == closing_tp:
                     logger.debug(f"Trade group {trade_group_id} closed by final TP: {closing_tp}")
-                return True
-            
-            # Check metadata for closes_position flag
-            if webhook.metadata_json:
-                try:
-                    metadata = json.loads(webhook.metadata_json)
-                    if metadata.get('closes_position') is True:
-                        logger.debug(f"Trade group {trade_group_id} closed by closes_position flag")
-                        return True
-                except (json.JSONDecodeError, TypeError):
-                    pass
+                    return True
         
         return False
 
