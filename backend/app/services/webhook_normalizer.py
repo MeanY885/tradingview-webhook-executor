@@ -55,6 +55,7 @@ class NormalizedWebhook:
     
     # Position state
     market_position: str = ""  # 'long', 'short', 'flat'
+    prev_market_position: str = ""  # Previous position state (for detecting entry/exit)
     is_position_closed: bool = False  # True if position_size=0 AND market_position=flat
     
     # Trade parameters
@@ -278,9 +279,11 @@ class WebhookNormalizer:
         )
         position_size = WebhookNormalizer._parse_float(position_size_raw)
         
-        # Extract market_position
+        # Extract market_position and prev_market_position
         market_position = str(raw_payload.get('market_position', '') or 
                              alert_params.get('market_position', '')).lower()
+        prev_market_position = str(raw_payload.get('prev_market_position', '') or 
+                                   alert_params.get('prev_market_position', '')).lower()
         
         # Determine if position is closed
         is_position_closed = (
@@ -384,7 +387,9 @@ class WebhookNormalizer:
                 raw_payload.get('TakeProfit1'),  # TradeAlgo Elite Indicator
                 raw_payload.get('Long TP-1 Price'),  # TradeAlgo Elite Backtester
                 raw_payload.get('Short TP-1 Price'),
-                alert_params.get('take_profit_1')
+                alert_params.get('take_profit_1'),
+                alert_params.get('tp_1_price'),  # Blofin format
+                raw_payload.get('tp_1_price')
             )
         )
         take_profit_2 = WebhookNormalizer._parse_float(
@@ -393,7 +398,9 @@ class WebhookNormalizer:
                 raw_payload.get('TakeProfit2'),
                 raw_payload.get('Long TP-2 Price'),
                 raw_payload.get('Short TP-2 Price'),
-                alert_params.get('take_profit_2')
+                alert_params.get('take_profit_2'),
+                alert_params.get('tp_2_price'),  # Blofin format
+                raw_payload.get('tp_2_price')
             )
         )
         take_profit_3 = WebhookNormalizer._parse_float(
@@ -402,7 +409,9 @@ class WebhookNormalizer:
                 raw_payload.get('TakeProfit3'),
                 raw_payload.get('Long TP-3 Price'),
                 raw_payload.get('Short TP-3 Price'),
-                alert_params.get('take_profit_3')
+                alert_params.get('take_profit_3'),
+                alert_params.get('tp_3_price'),  # Blofin format
+                raw_payload.get('tp_3_price')
             )
         )
         take_profit_4 = WebhookNormalizer._parse_float(
@@ -411,7 +420,9 @@ class WebhookNormalizer:
                 raw_payload.get('TakeProfit4'),
                 raw_payload.get('Long TP-4 Price'),
                 raw_payload.get('Short TP-4 Price'),
-                alert_params.get('take_profit_4')
+                alert_params.get('take_profit_4'),
+                alert_params.get('tp_4_price'),  # Blofin format
+                raw_payload.get('tp_4_price')
             )
         )
         take_profit_5 = WebhookNormalizer._parse_float(
@@ -420,7 +431,9 @@ class WebhookNormalizer:
                 raw_payload.get('TakeProfit5'),
                 raw_payload.get('Long TP-5 Price'),
                 raw_payload.get('Short TP-5 Price'),
-                alert_params.get('take_profit_5')
+                alert_params.get('take_profit_5'),
+                alert_params.get('tp_5_price'),  # Blofin format
+                raw_payload.get('tp_5_price')
             )
         )
 
@@ -681,6 +694,7 @@ class WebhookNormalizer:
             order_contracts=order_contracts,
             position_size=position_size,
             market_position=market_position,
+            prev_market_position=prev_market_position,
             is_position_closed=is_position_closed,
             leverage=leverage,
             pyramiding=pyramiding,

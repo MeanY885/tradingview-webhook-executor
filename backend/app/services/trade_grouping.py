@@ -168,6 +168,33 @@ class TradeGroupingService:
             elif 'reduce_' in order_type or 'exit_' in order_type:
                 is_exit = True
         
+        # IMPORTANT: Use prev_market_position to detect entry/exit for single-condition indicators
+        # This handles cases where order_type doesn't change but position state does
+        prev_market_position = normalized.prev_market_position
+        
+        if prev_market_position and not is_entry and not is_exit:
+            # Entry: flat → long/short
+            if prev_market_position == 'flat' and market_position in ['long', 'short']:
+                is_entry = True
+                trade_direction = market_position
+                logger.info(f"Detected entry via prev_market_position: flat → {market_position}")
+            # Exit: long/short → flat
+            elif prev_market_position in ['long', 'short'] and market_position == 'flat':
+                is_exit = True
+                trade_direction = prev_market_position  # Direction of the closed position
+                logger.info(f"Detected exit via prev_market_position: {prev_market_position} → flat")
+            # Reversal: long → short or short → long
+            elif prev_market_position == 'long' and market_position == 'short':
+                # This is both an exit (close long) and entry (open short)
+                # For grouping purposes, treat as exit of the previous position
+                is_exit = True
+                trade_direction = 'long'  # Closing the long
+                logger.info(f"Detected reversal: long → short (treating as exit long)")
+            elif prev_market_position == 'short' and market_position == 'long':
+                is_exit = True
+                trade_direction = 'short'  # Closing the short
+                logger.info(f"Detected reversal: short → long (treating as exit short)")
+        
         # Fallback: infer direction from market_position if not determined
         if not trade_direction:
             if market_position == 'long':
