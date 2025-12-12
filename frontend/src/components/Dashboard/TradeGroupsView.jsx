@@ -245,11 +245,21 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
 
   // Get SL/TP values from a trade - Task 10.2
   const getSLTPValues = (trade) => {
+    // Extract individual TP levels from metadata
+    const tpLevels = trade.metadata?.take_profit_levels || {}
+    const tp1 = tpLevels.take_profit_1 ?? null
+    const tp2 = tpLevels.take_profit_2 ?? null
+    const tp3 = tpLevels.take_profit_3 ?? null
+    
     return {
       currentSL: trade.current_stop_loss ?? trade.stop_loss ?? 
                  trade.metadata?.alert_message_params?.stop_loss_price ?? null,
       currentTP: trade.current_take_profit ?? trade.take_profit ?? 
                  trade.metadata?.alert_message_params?.take_profit_price ?? null,
+      tp1,
+      tp2,
+      tp3,
+      tpCount: trade.metadata?.tp_count ?? (tp3 ? 3 : tp2 ? 2 : tp1 ? 1 : 0),
       trailPrice: trade.exit_trail_price ?? null,
       trailOffset: trade.exit_trail_offset ?? null,
       slChanged: trade.sl_changed ?? false,
@@ -462,19 +472,23 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
                     </Tooltip>
                   )}
 
-                  {/* Entry → Exit */}
+                  {/* Entry → Exit (only show Exit for closed trades) */}
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip
                       label={`Entry: ${entryMeta.entryPrice ? parseFloat(entryMeta.entryPrice).toFixed(4) : 'N/A'}`}
                       size="small"
                       variant="outlined"
                     />
-                    <Typography color="text.disabled">→</Typography>
-                    <Chip
-                      label={`Exit: ${latestTrade?.price || latestTrade?.metadata?.order_price || 'N/A'}`}
-                      size="small"
-                      variant="outlined"
-                    />
+                    {status === 'CLOSED' && (
+                      <>
+                        <Typography color="text.disabled">→</Typography>
+                        <Chip
+                          label={`Exit: ${latestTrade?.price || latestTrade?.metadata?.order_price || 'N/A'}`}
+                          size="small"
+                          variant="outlined"
+                        />
+                      </>
+                    )}
                   </Box>
 
                   {/* P&L */}
@@ -735,6 +749,10 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
                                   previousSL={previousSL}
                                   currentTP={sltpValues.currentTP}
                                   previousTP={previousTP}
+                                  tp1={sltpValues.tp1}
+                                  tp2={sltpValues.tp2}
+                                  tp3={sltpValues.tp3}
+                                  tpCount={sltpValues.tpCount}
                                   trailPrice={sltpValues.trailPrice}
                                   trailOffset={sltpValues.trailOffset}
                                   compact={true}
