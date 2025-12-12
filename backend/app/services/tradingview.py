@@ -409,12 +409,13 @@ class TradingViewAlertParser:
         # Remove leading/trailing quotes if present
         if cleaned.startswith('"') and not cleaned.startswith('"{'):
             cleaned = cleaned[1:]
-        if cleaned.endswith('",') or cleaned.endswith('"'):
-            cleaned = cleaned.rstrip('",')
 
         # Handle double quotes at start (e.g., ""margin_mode" -> "margin_mode")
         while cleaned.startswith('""'):
             cleaned = cleaned[1:]
+
+        # Clean up trailing characters: remove trailing commas, quotes, spaces
+        cleaned = cleaned.rstrip(' ,"\t\n\r')
 
         # Handle case where string starts with "key": (missing opening brace)
         if re.match(r'^"[^"]+"\s*:', cleaned):
@@ -424,7 +425,7 @@ class TradingViewAlertParser:
         if not cleaned.startswith('{'):
             cleaned = '{' + cleaned
         if not cleaned.endswith('}'):
-            cleaned = cleaned.rstrip(',') + '}'
+            cleaned = cleaned + '}'
 
         try:
             return json.loads(cleaned)
@@ -435,13 +436,17 @@ class TradingViewAlertParser:
             pattern = r'"([^"]+)":\s*"?([^",}]+)"?'
             matches = re.findall(pattern, alert_message)
             for key, value in matches:
+                value = value.strip()
                 # Try to convert to appropriate type
                 if value.lower() == 'true':
                     params[key] = True
                 elif value.lower() == 'false':
                     params[key] = False
                 elif value.replace('.', '', 1).replace('-', '', 1).isdigit():
-                    params[key] = float(value) if '.' in value else int(value)
+                    try:
+                        params[key] = float(value) if '.' in value else int(value)
+                    except ValueError:
+                        params[key] = value
                 else:
                     params[key] = value
             return params
