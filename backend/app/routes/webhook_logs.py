@@ -139,7 +139,20 @@ def reprocess_webhook_log(log_id):
         try:
             raw_payload_dict = json.loads(log.raw_payload)
         except (json.JSONDecodeError, TypeError):
-            raw_payload_dict = {}
+            # Try to fix common JSON issues (malformed order_alert_message)
+            try:
+                import re
+                fixed_payload = log.raw_payload
+                # Remove problematic order_alert_message field that breaks JSON
+                fixed_payload = re.sub(
+                    r'"order_alert_message"\s*:\s*"[^}]*",?\s*',
+                    '',
+                    fixed_payload
+                )
+                raw_payload_dict = json.loads(fixed_payload)
+                logger.info(f"Fixed malformed JSON by removing order_alert_message")
+            except (json.JSONDecodeError, TypeError):
+                raw_payload_dict = {}
         
         # Normalize the webhook
         normalized = WebhookNormalizer.normalize(raw_payload_dict)
