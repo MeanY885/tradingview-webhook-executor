@@ -66,6 +66,20 @@ export function determineActionType(webhook) {
   if (comment.includes('tp3') || orderId.includes('3rd target')) return 'TP3'
   if (comment.includes('sl') || comment.includes('stop loss')) return 'SL Close'
   if (alertMessage.includes('reduce')) return 'Partial'
+  
+  // Check metadata for signal_type to detect entries (Oanda indicator format)
+  const signalType = webhook.metadata?.signal_type?.toLowerCase() || ''
+  if (signalType === 'bull_entry' || signalType === 'bear_entry') {
+    return 'Entry'
+  }
+  
+  // Check internal order type for entries
+  const internalOrderType = webhook.metadata?._internal_order_type?.toLowerCase() || ''
+  if (internalOrderType.includes('enter_')) {
+    return 'Entry'
+  }
+  
+  // Fallback: buy without comment is likely an entry (for non-Oanda)
   if (webhook.action === 'buy' && !comment) return 'Entry'
   return 'Close'
 }

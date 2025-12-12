@@ -315,8 +315,14 @@ class OandaIndicatorParser:
     
     @staticmethod
     def _determine_tp_level(signal_type: OandaSignalType) -> Optional[str]:
-        """Determine TP/SL level string for exits."""
+        """Determine TP/SL level string for entries and exits.
+        
+        Returns 'ENTRY' for bull_entry/bear_entry signals so the frontend
+        can correctly identify them as entry trades (not closes).
+        """
         mapping = {
+            OandaSignalType.BULL_ENTRY: 'ENTRY',
+            OandaSignalType.BEAR_ENTRY: 'ENTRY',
             OandaSignalType.TP1: 'TP1',
             OandaSignalType.TP2: 'TP2',
             OandaSignalType.TP3: 'TP3',
