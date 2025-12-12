@@ -150,8 +150,14 @@ class WebhookNormalizer:
         while cleaned.startswith('""'):
             cleaned = cleaned[1:]
         
-        # Clean up trailing characters: remove trailing commas, quotes, spaces
-        cleaned = cleaned.rstrip(' ,"\t\n\r')
+        # Clean up trailing junk: ," or , or trailing whitespace
+        # But be careful not to strip valid JSON ending like "value"
+        while cleaned.endswith(',"') or cleaned.endswith(','):
+            if cleaned.endswith(',"'):
+                cleaned = cleaned[:-2]
+            elif cleaned.endswith(','):
+                cleaned = cleaned[:-1]
+        cleaned = cleaned.rstrip(' \t\n\r')
         
         # Handle case where string starts with "key": (missing opening brace)
         # Pattern: starts with "word": which indicates a JSON key-value pair
