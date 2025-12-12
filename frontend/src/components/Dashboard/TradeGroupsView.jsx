@@ -673,9 +673,12 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
                                   'default'
                                 }
                               />
-                              <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                                {trade.action?.toUpperCase() || 'N/A'} {trade.quantity}
-                              </Typography>
+                              {/* For entries, just show price. For exits, show action and quantity */}
+                              {!isEntry && (
+                                <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                  {trade.action?.toUpperCase() || 'N/A'} {trade.quantity}
+                                </Typography>
+                              )}
                               <Chip
                                 label={`@ ${trade.price || trade.metadata?.order_price || 'N/A'}`}
                                 size="small"
