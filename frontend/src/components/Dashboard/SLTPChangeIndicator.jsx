@@ -59,10 +59,10 @@ const SLTPChangeIndicator = ({
   const tpIncreased = tpChanged && currentTP > previousTP
   const tpDecreased = tpChanged && currentTP < previousTP
 
-  // Format price for display
+  // Format price for display (5 decimals for forex pipettes)
   const formatPrice = (price) => {
     if (price === null || price === undefined) return 'N/A'
-    return parseFloat(price).toFixed(4)
+    return parseFloat(price).toFixed(5)
   }
 
   // Render change arrow

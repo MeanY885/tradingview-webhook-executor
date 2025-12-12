@@ -460,7 +460,7 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
                     <Tooltip title="Stop Loss Price">
                       <Chip
                         icon={<StopLossShieldIcon sx={{ fontSize: '0.9rem' }} />}
-                        label={`SL: ${parseFloat(entryMeta.stopLoss).toFixed(4)}`}
+                        label={`SL: ${parseFloat(entryMeta.stopLoss).toFixed(5)}`}
                         size="small"
                         variant="outlined"
                         sx={{ 
@@ -475,7 +475,7 @@ const TradeGroupsView = ({ webhooks, onWebhookDeleted, onRefresh }) => {
                   {/* Entry → Exit (only show Exit for closed trades) */}
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip
-                      label={`Entry: ${entryMeta.entryPrice ? parseFloat(entryMeta.entryPrice).toFixed(4) : 'N/A'}`}
+                      label={`Entry: ${entryMeta.entryPrice ? parseFloat(entryMeta.entryPrice).toFixed(5) : 'N/A'}`}
                       size="small"
                       variant="outlined"
                     />
