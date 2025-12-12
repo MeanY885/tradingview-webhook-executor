@@ -145,12 +145,13 @@ class WebhookNormalizer:
         # Remove leading/trailing quotes if present (but not part of JSON structure)
         if cleaned.startswith('"') and not cleaned.startswith('"{'):
             cleaned = cleaned[1:]
-        if cleaned.endswith('",') or (cleaned.endswith('"') and not cleaned.endswith('}"')):
-            cleaned = cleaned.rstrip('",')
         
         # Handle double quotes at start (e.g., ""margin_mode" -> "margin_mode")
         while cleaned.startswith('""'):
             cleaned = cleaned[1:]
+        
+        # Clean up trailing characters: remove trailing commas, quotes, spaces
+        cleaned = cleaned.rstrip(' ,"\t\n\r')
         
         # Handle case where string starts with "key": (missing opening brace)
         # Pattern: starts with "word": which indicates a JSON key-value pair
@@ -161,7 +162,7 @@ class WebhookNormalizer:
         if not cleaned.startswith('{'):
             cleaned = '{' + cleaned
         if not cleaned.endswith('}'):
-            cleaned = cleaned.rstrip(',') + '}'
+            cleaned = cleaned + '}'
         
         try:
             result = json.loads(cleaned)

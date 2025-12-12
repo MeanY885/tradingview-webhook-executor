@@ -91,7 +91,12 @@ def _process_webhook(broker: str, webhook_identifier: str):
         try:
             raw_payload_dict = json_module.loads(raw_payload)
         except json_module.JSONDecodeError:
-            raw_payload_dict = {}
+            # Not valid JSON - reject early with helpful message
+            logger.warning(f"Received non-JSON payload from user {user.id}: {raw_payload[:100]}")
+            return jsonify({
+                'success': False, 
+                'error': 'Invalid payload format. Expected JSON. Check your TradingView alert message template.'
+            }), 400
         
         # For Oanda, try the specialized indicator parser first
         parser = TradingViewAlertParser()  # Always create for validation

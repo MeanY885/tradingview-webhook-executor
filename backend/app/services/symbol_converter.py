@@ -10,14 +10,26 @@ class SymbolConverter:
         Convert symbol to broker-specific format.
 
         Args:
-            symbol: Raw symbol (BTCUSDT, EURUSD, BTC-USDT, EUR_USD, etc.)
+            symbol: Raw symbol (BTCUSDT, EURUSD, BTC-USDT, EUR_USD, SOLUSDT.P, etc.)
             broker: Target broker ('blofin' or 'oanda')
 
         Returns:
             str: Broker-specific format (BTC-USDT for Blofin, EUR_USD for Oanda)
         """
+        # Handle perpetual contract suffixes (.P, -PERP, etc.)
+        # Store suffix to preserve it
+        suffix = ''
+        clean_symbol = symbol.upper()
+        
+        # Check for common perpetual suffixes
+        for perp_suffix in ['.P', '-PERP', '_PERP', 'PERP']:
+            if clean_symbol.endswith(perp_suffix):
+                suffix = perp_suffix
+                clean_symbol = clean_symbol[:-len(perp_suffix)]
+                break
+        
         # Remove common separators
-        clean_symbol = symbol.replace('-', '').replace('_', '').replace('/', '').upper()
+        clean_symbol = clean_symbol.replace('-', '').replace('_', '').replace('/', '')
 
         if broker == 'blofin':
             # Blofin uses hyphen: BTC-USDT, ETH-USDT
@@ -25,24 +37,24 @@ class SymbolConverter:
             for quote in ['USDT', 'USDC', 'BTC', 'ETH']:
                 if clean_symbol.endswith(quote):
                     base = clean_symbol[:-len(quote)]
-                    return f"{base}-{quote}"
+                    return f"{base}-{quote}{suffix}"
             # If no match, try to split (assume 3-4 char base, rest is quote)
-            return f"{clean_symbol[:3]}-{clean_symbol[3:]}"
+            return f"{clean_symbol[:3]}-{clean_symbol[3:]}{suffix}"
 
         elif broker == 'oanda':
             # Oanda uses underscore: EUR_USD, GBP_JPY
             # Most forex pairs are 6 characters (3+3)
             if len(clean_symbol) == 6:
-                return f"{clean_symbol[:3]}_{clean_symbol[3:]}"
+                return f"{clean_symbol[:3]}_{clean_symbol[3:]}{suffix}"
             # Handle longer symbols (e.g., XAUUSD = XAU_USD for gold)
             elif len(clean_symbol) == 7:
-                return f"{clean_symbol[:4]}_{clean_symbol[4:]}"
+                return f"{clean_symbol[:4]}_{clean_symbol[4:]}{suffix}"
             else:
                 # Default: split in middle
                 mid = len(clean_symbol) // 2
-                return f"{clean_symbol[:mid]}_{clean_symbol[mid:]}"
+                return f"{clean_symbol[:mid]}_{clean_symbol[mid:]}{suffix}"
 
-        # Unknown broker, return as-is
+        # Unknown broker, return as-is (preserve original)
         return symbol
 
     @staticmethod
