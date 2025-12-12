@@ -183,6 +183,14 @@ def reprocess_webhook_log(log_id):
         log.exit_trail_price = normalized.exit_trail_price
         log.exit_trail_offset = normalized.exit_trail_offset
         
+        # Update metadata_json with fresh parsed data
+        metadata = params.get('metadata', {})
+        if metadata:
+            try:
+                log.metadata_json = json.dumps(metadata)
+            except (TypeError, ValueError):
+                pass
+        
         # Update status based on test_mode
         if params.get('test_mode', False):
             log.status = 'test_success'
