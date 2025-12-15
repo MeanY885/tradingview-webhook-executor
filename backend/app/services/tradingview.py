@@ -514,8 +514,10 @@ class TradingViewAlertParser:
             raise ValueError("Invalid alert: missing BUY or SELL action")
         if not symbol:
             raise ValueError("Invalid alert: missing trading symbol")
-        if not quantity or quantity <= 0:
-            raise ValueError("Invalid alert: missing or invalid quantity")
+        # Note: quantity is optional - signals are used as indicators only
+        # and quantity will be determined by the app in the future
+        if not quantity:
+            quantity = 0
 
         # Extract optional parameters (works with all formats)
         price_match = re.search(r'PRICE[:\s]+([0-9.]+)', text_upper)
@@ -559,8 +561,8 @@ class TradingViewAlertParser:
         if params.get('action') not in ['buy', 'sell']:
             issues.append(f"Invalid or missing 'action': got '{params.get('action')}' (expected 'buy' or 'sell')")
 
-        if not params.get('quantity') or params['quantity'] <= 0:
-            issues.append(f"Invalid or missing 'quantity': got '{params.get('quantity')}' (must be > 0)")
+        # Note: quantity validation removed - signals are used as indicators only
+        # and quantity will be determined by the app in the future
 
         if params.get('order_type') == 'limit' and not params.get('price'):
             issues.append("Limit orders require a 'price'")

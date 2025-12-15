@@ -113,7 +113,7 @@ def _process_webhook(broker: str, webhook_identifier: str):
         original_symbol = params['symbol']
         params['symbol'] = SymbolConverter.normalize_symbol(original_symbol, broker)
 
-        logger.info(f"Parsed alert: {params['action']} {params['quantity']} {params['symbol']} (original: {original_symbol})")
+        logger.info(f"Parsed alert: {params['action']} {params.get('quantity', 0)} {params['symbol']} (original: {original_symbol})")
 
         # 6. Validate params
         is_valid, error_msg = parser.validate_params(params)
@@ -150,6 +150,23 @@ def _process_webhook(broker: str, webhook_identifier: str):
                 'message': 'Test alert received successfully - no trade executed'
             })
 
+        # 7b. Check for signal-only mode (no quantity - used as indicator for future app-determined sizing)
+        quantity = params.get('quantity', 0)
+        if not quantity or quantity <= 0:
+            logger.info(f"Signal-only mode - no quantity provided, logging signal for user {user.id}")
+            log_entry.status = 'signal_received'
+            log_entry.error_message = 'Signal received - quantity to be determined by app'
+            db.session.commit()
+            broadcast_webhook_event(user.id, log_entry)
+            return jsonify({
+                'success': True,
+                'signal_only': True,
+                'webhook_log_id': log_entry.id,
+                'symbol': params['symbol'],
+                'action': params['action'],
+                'message': 'Signal received successfully - trade execution pending quantity configuration'
+            })
+
         # 8. Get user credentials
         cred = UserCredentials.query.filter_by(
             user_id=user.id,
@@ -184,7 +201,7 @@ def _process_webhook(broker: str, webhook_identifier: str):
             'webhook_log_id': log_entry.id,
             'symbol': params['symbol'],
             'action': params['action'],
-            'quantity': params['quantity']
+            'quantity': params.get('quantity', 0)
         })
 
     except ValueError as e:

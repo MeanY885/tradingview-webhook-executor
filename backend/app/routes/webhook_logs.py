@@ -172,7 +172,7 @@ def reprocess_webhook_log(log_id):
         if order_type and (order_type.startswith('{{') or len(order_type) > 20):
             order_type = 'market'
         log.order_type = order_type
-        log.quantity = params['quantity']
+        log.quantity = params.get('quantity', 0)
         log.price = params.get('price')
         log.stop_loss = normalized.stop_loss_price or params.get('stop_loss')
         log.take_profit = params.get('take_profit')
@@ -315,7 +315,7 @@ def reprocess_all_parse_errors():
             if order_type and (order_type.startswith('{{') or len(order_type) > 20):
                 order_type = 'market'
             log.order_type = order_type
-            log.quantity = params['quantity']
+            log.quantity = params.get('quantity', 0)
             log.price = params.get('price')
             log.stop_loss = normalized.stop_loss_price or params.get('stop_loss')
             log.leverage = normalized.leverage or params.get('leverage')
